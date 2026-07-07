@@ -146,7 +146,7 @@ textarea{width:100%;min-height:180px;font-family:'IBM Plex Mono',monospace;font-
   <section id="tab-importar">
     <div class="card" style="max-width:860px">
       <h3>Importar extracto bancario con IA</h3>
-      <p class="note" style="margin-bottom:12px">Pega el texto de tu extracto o sube el archivo (PDF, CSV o TXT) de BBVA, Trade Republic, N26… La IA identificará cada movimiento, lo clasificará en tus categorías y detectará duplicados antes de añadir nada.</p>
+      <p class="note" style="margin-bottom:12px">Pega el texto de tu extracto o sube el archivo (PDF, CSV o TXT) de BBVA, Trade Republic, N26… La IA identificará cada movimiento, lo clasificará en tus categorías y detectará duplicados antes de añadir nada. <strong>Requiere tener configurada la sincronización (⚙)</strong>, ya que el análisis se hace a través de tu proxy de Apps Script.</p>
       <div style="display:flex;gap:8px;margin-bottom:10px;flex-wrap:wrap">
         <button class="btn" onclick="document.getElementById('fileExtracto').click()">Subir PDF / CSV / TXT</button>
         <input type="file" id="fileExtracto" accept=".pdf,.csv,.txt,.tsv" style="display:none" onchange="leerArchivo(this)">
@@ -493,6 +493,10 @@ async function analizarExtracto(){
   const texto = document.getElementById('extractoTexto').value.trim();
   if(!texto && !pdfPendiente){ toast('Pega el extracto o sube un archivo'); return; }
   const btn = document.getElementById('btnAnalizar'), st = document.getElementById('impStatus');
+  if(!syncUrl){
+    st.innerHTML = '⚠ Configura primero la sincronización (⚙) — el análisis con IA necesita tu proxy de Apps Script con la clave de Anthropic para funcionar fuera de Claude.';
+    return;
+  }
   btn.disabled = true; st.innerHTML = '<span class="spinner"></span>Analizando movimientos…';
   const cuentaDef = document.getElementById('impCuenta').value;
   const prompt = `Eres un asistente que estructura extractos bancarios españoles. Analiza el extracto adjunto y devuelve SOLO un array JSON (sin markdown, sin explicaciones) donde cada elemento es un movimiento con estos campos:
@@ -508,11 +512,12 @@ Reglas de clasificación: supermercados/restaurantes/cafeterías → Alimentaci�
     ? [{type:'document',source:{type:'base64',media_type:'application/pdf',data:pdfPendiente.data}},{type:'text',text:prompt}]
     : prompt + '\n\nExtracto:\n' + texto;
   try{
-    const resp = await fetch('https://api.anthropic.com/v1/messages',{
-      method:'POST', headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({model:'claude-sonnet-4-6', max_tokens:1000, messages:[{role:'user',content}]})
+    const resp = await fetch(syncUrl,{
+      method:'POST', headers:{'Content-Type':'text/plain'},
+      body: JSON.stringify({aiContent: content})
     });
     const data = await resp.json();
+    if(data.ok===false){ throw new Error(data.error||'Error del proxy'); }
     let text = (data.content||[]).filter(b=>b.type==='text').map(b=>b.text).join('\n');
     text = text.replace(/```json|```/g,'').trim();
     const ini = text.indexOf('['), fin = text.lastIndexOf(']');
@@ -527,7 +532,7 @@ Reglas de clasificación: supermercados/restaurantes/cafeterías → Alimentaci�
     document.getElementById('extractoTexto').placeholder = '03/07/2026  MERCADONA COMPRA  -23,45 €\n01/07/2026  NOMINA EMPRESA  +2.130,50 €\n…';
     renderReview();
   }catch(e){
-    st.textContent = 'No se pudo analizar el extracto. Revisa el formato e inténtalo de nuevo.';
+    st.textContent = 'No se pudo analizar: ' + e.message;
   }finally{ btn.disabled = false; }
 }
 function renderReview(){
