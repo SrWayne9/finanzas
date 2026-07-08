@@ -140,6 +140,9 @@ textarea{width:100%;min-height:180px;font-family:'IBM Plex Mono',monospace;font-
       <select id="fTipo" onchange="renderMovs()"><option value="">Todos los tipos</option><option value="ingreso">Ingresos</option><option value="gasto">Gastos</option><option value="traspaso">Traspasos</option><option value="inversion">Inversiones</option></select>
       <select id="fMes" onchange="renderMovs()"><option value="">Todo el año</option></select>
       <select id="fCat" onchange="renderMovs()"><option value="">Todas las categorías</option></select>
+      <select id="fCuenta" onchange="renderMovs()"><option value="">Todas las cuentas</option></select>
+      <input type="number" step="0.01" id="fImporteMin" placeholder="Importe mín." style="width:110px" oninput="renderMovs()">
+      <input type="number" step="0.01" id="fImporteMax" placeholder="Importe máx." style="width:110px" oninput="renderMovs()">
       <input type="text" id="fTexto" placeholder="Buscar descripción…" oninput="renderMovs()">
     </div>
     <div class="card scroll-x"><table id="tablaMovs"></table></div>
@@ -247,13 +250,13 @@ textarea{width:100%;min-height:180px;font-family:'IBM Plex Mono',monospace;font-
 const DATOS_ORIGINALES = {"ingresos": [], "gastos": [], "inversiones": [], "cuentas": [], "cartera": []};
 
 const MESES = ['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'];
-const CATS_ING = ['Salario Neto','Extras / Dietas','Rentas / Alquiler','Dividendos','Venta de acciones','Intereses Cuentas Remuneradas','Otros Ingresos'];
-const CATS_GAS = ['Vivienda (IBI)','Alimentación','Transporte (Gasolina, Bono Transportes)','Suministros (Luz, Agua, Gas)','Telecomunicaciones (Móvil)','Salud y Farmacia','Ocio (Cine, Bolos…)','Entretenimiento (Disney, Netflix…)','Ropa y Personal','Cosmética','Educación','Libros','Warhammer','Viajes','Donaciones','Otros Gastos'];
+const CATS_ING = ['Salario Neto','Extras / Dietas','Rentas / Alquiler','Dividendos','Venta de acciones','Intereses Cuentas Remuneradas','Regalos','Otros Ingresos'];
+const CATS_GAS = ['Vivienda (IBI)','Alimentación','Transporte (Gasolina, Bono Transportes)','Suministros (Luz, Agua, Gas)','Telecomunicaciones (Móvil)','Salud y Farmacia','Ocio (Cine, Bolos…)','Entretenimiento (Disney, Netflix…)','Ropa y Personal','Cosmética','Educación','Libros','Warhammer','Viajes','Donaciones','SEGUROS','ALQUILER (GARAJE)','VIDEOJUEGOS','Tarjeta Aqua Máxima','Tarjeta Aqua Mas','Regalos','Otros Gastos'];
 const CATS_INV = ['Plan de Inversión','Inversión','Plan de Ahorro (Saveback)'];
 const CAT_TRASPASO = 'Traspaso a Cuenta Bancaria';
 // Cuentas externas: seleccionables como origen/destino en traspasos, pero NUNCA
 // aparecen en la tabla de "Cuentas bancarias" ni suman saldo propio.
-const CUENTAS_EXTERNAS = ['Común Santander'];
+const CUENTAS_EXTERNAS = ['Común Santander', 'BBVA Metas'];
 const LS_KEY = 'finanzas2026_v1';
 const AÑO_ACTUAL = new Date().getFullYear();
 
@@ -578,22 +581,33 @@ function renderFiltros(){
   if(fCat.options.length===1) [...CATS_ING,...CATS_GAS,CAT_TRASPASO,...CATS_INV,'Acciones / ETFs'].forEach(c=> fCat.add(new Option(c,c)));
   const fPendMes = document.getElementById('fPendMes');
   if(fPendMes.options.length===1) MESES.forEach((m,i)=> fPendMes.add(new Option(m,i)));
+  const fCuenta = document.getElementById('fCuenta');
+  const valPrevio = fCuenta.value;
+  fCuenta.innerHTML = '<option value="">Todas las cuentas</option>';
+  [...S.cuentas.map(c=>c.nombre), ...CUENTAS_EXTERNAS].forEach(c=> fCuenta.add(new Option(c,c)));
+  fCuenta.value = valPrevio;
 }
 function renderMovs(){
   const tipo = document.getElementById('fTipo').value;
   const mes = document.getElementById('fMes').value;
   const cat = document.getElementById('fCat').value;
   const txt = document.getElementById('fTexto').value.toLowerCase();
+  const cuentaF = document.getElementById('fCuenta').value;
+  const impMin = parseFloat(document.getElementById('fImporteMin').value);
+  const impMax = parseFloat(document.getElementById('fImporteMax').value);
   let movs = movsUnificados();
   if(tipo) movs = movs.filter(m=>m.tipo===tipo);
   if(mes!=='') movs = movs.filter(m=>mesDe(m.fecha)===parseInt(mes));
   if(cat) movs = movs.filter(m=>m.cat===cat);
   if(txt) movs = movs.filter(m=>(m.desc||'').toLowerCase().includes(txt));
+  if(cuentaF) movs = movs.filter(m=> m.cuenta===cuentaF || m.origen===cuentaF || m.destino===cuentaF);
+  if(!isNaN(impMin)) movs = movs.filter(m=> m.importe>=impMin);
+  if(!isNaN(impMax)) movs = movs.filter(m=> m.importe<=impMax);
   const rows = movs.map(m=>{
     const cu = m.tipo==='traspaso' ? `${m.origen||'❓'} → ${m.destino||'❓'}` : (m.cuenta||m.origen||'');
     const cls = m.tipo==='ingreso'?'ing':m.tipo==='gasto'?'gas':m.tipo==='inversion'?'inv':'tra';
     const sign = m.tipo==='ingreso'?'+':'−';
-    return `<tr><td class="num" style="color:var(--muted)">${m.fecha||''}</td><td>${m.desc||''} ${m.pendiente?'<span class="dup">🕓 pendiente</span>':''}</td>
+    return `<tr data-key="${m._src}-${m._i}"><td class="num" style="color:var(--muted)">${m.fecha||''}</td><td>${m.desc||''} ${m.pendiente?'<span class="dup">🕓 pendiente</span>':''}</td>
       <td><span class="tag ${cls}">${m.cat||''}</span></td><td>${cu}</td>
       <td class="r num" style="color:var(--${cls})">${sign} ${fmt(m.importe)}</td>
       <td class="r" style="white-space:nowrap"><button class="del-btn" onclick="editarMov('${m._src}',${m._i})" title="Editar">✏️</button><button class="del-btn" onclick="borrarMov('${m._src}',${m._i})" title="Eliminar">✕</button></td></tr>`;
@@ -610,8 +624,27 @@ function borrarMov(src,i){
 
 /* ── Añadir ── */
 function optHtml(arr,sel){ return arr.map(o=>`<option ${o===sel?'selected':''}>${o}</option>`).join(''); }
-function cuentasOpt(sel){ return S.cuentas.length ? optHtml(S.cuentas.map(c=>c.nombre),sel) : '<option disabled selected>Añade una cuenta en "Cuentas y cartera"</option>'; }
-function cuentasOptTraspaso(sel){ return optHtml([...S.cuentas.map(c=>c.nombre), ...CUENTAS_EXTERNAS], sel); }
+function irAMovimiento(ref){
+  [...document.getElementById('nav').children].forEach(b=> b.classList.toggle('active', b.dataset.tab==='movs'));
+  ['panel','movs','add','importar','cuentas','historico','pendientes'].forEach(t=> document.getElementById('tab-'+t).style.display = t==='movs' ? '' : 'none');
+  const fila = document.querySelector(`#tablaMovs tr[data-key="${ref.src}-${ref.i}"]`);
+  if(fila){
+    fila.scrollIntoView({behavior:'smooth', block:'center'});
+    fila.style.transition = 'background-color .3s';
+    fila.style.backgroundColor = 'rgba(242,185,75,.25)';
+    setTimeout(()=>{ fila.style.backgroundColor = ''; }, 1600);
+  }
+}
+function cuentasOpt(sel){
+  const nombres = S.cuentas.map(c=>c.nombre);
+  if(sel && !nombres.includes(sel)) nombres.push(sel);
+  return nombres.length ? optHtml(nombres,sel) : '<option disabled selected>Añade una cuenta en "Cuentas y cartera"</option>';
+}
+function cuentasOptTraspaso(sel){
+  const nombres = [...S.cuentas.map(c=>c.nombre), ...CUENTAS_EXTERNAS];
+  if(sel && !nombres.includes(sel)) nombres.push(sel);
+  return optHtml(nombres, sel);
+}
 function renderForm(){
   const hoy = new Date().toISOString().slice(0,10);
   const g = document.getElementById('formGrid');
@@ -621,7 +654,7 @@ function renderForm(){
   if(tipoAdd==='gasto') g.innerHTML = base +
     `<div class="fld"><label>Categoría</label><select id="aCat">${optHtml(CATS_GAS)}</select></div>
      <div class="fld"><label>Cuenta origen</label><select id="aOrigen">${cuentasOpt('BBVA')}</select></div>
-     <div class="fld"><label>Tipo de pago</label><select id="aPago"><option>Débito</option><option>Crédito</option><option>Efectivo</option><option>Bizum</option></select></div>`;
+     <div class="fld"><label>Tipo de pago</label><select id="aPago"><option>Débito</option><option>Crédito</option><option>Efectivo</option><option>Bizum</option><option>PayPal</option></select></div>`;
   else if(tipoAdd==='ingreso') g.innerHTML = base +
     `<div class="fld"><label>Categoría</label><select id="aCat">${optHtml(CATS_ING)}</select></div>
      <div class="fld"><label>Cuenta destino</label><select id="aCuenta">${cuentasOpt('BBVA')}</select></div>`;
@@ -649,15 +682,22 @@ function toggleTickerFields(){
 }
 document.getElementById('tipoSeg').addEventListener('click',e=>{
   if(e.target.tagName!=='BUTTON') return;
+  const prevFecha = document.getElementById('aFecha')?.value;
+  const prevDesc = document.getElementById('aDesc')?.value;
+  const prevImporte = document.getElementById('aImporte')?.value;
   tipoAdd = e.target.dataset.t;
   [...document.getElementById('tipoSeg').children].forEach(b=> b.className = b===e.target ? 'sel-'+{gasto:'gas',ingreso:'ing',traspaso:'tra',inversion:'inv'}[tipoAdd] : '');
   renderForm();
+  if(prevFecha) document.getElementById('aFecha').value = prevFecha;
+  if(prevDesc) document.getElementById('aDesc').value = prevDesc;
+  if(prevImporte) document.getElementById('aImporte').value = prevImporte;
 });
 let editando = null; // {src:'ingresos'|'gastos'|'inversiones', i:number} mientras se edita un movimiento existente
 function guardarMov(){
   const v = id => document.getElementById(id)?.value;
-  const fecha = v('aFecha'), desc = v('aDesc')||'', importe = parseFloat(v('aImporte'));
-  if(!fecha || !(importe>0)){ toast('Indica fecha e importe válidos'); return; }
+  const fecha = v('aFecha'), desc = v('aDesc')||'', importeRaw = v('aImporte'), importe = parseFloat(importeRaw);
+  if(!fecha){ toast('Indica una fecha antes de guardar'); return; }
+  if(!importeRaw || !(importe>0)){ toast('Falta el importe: indica una cantidad mayor que cero antes de guardar'); return; }
   let nuevo, destinoArr;
   if(tipoAdd==='gasto'){ nuevo = {fecha,desc,cat:v('aCat'),importe,pago:v('aPago'),origen:v('aOrigen'),destino:null}; destinoArr='gastos'; }
   else if(tipoAdd==='ingreso'){ nuevo = {fecha,desc,cat:v('aCat'),importe,cuenta:v('aCuenta')}; destinoArr='ingresos'; }
@@ -667,14 +707,20 @@ function guardarMov(){
     destinoArr='inversiones'; }
 
   if(editando){
+    let finalIndex;
     if(editando.src===destinoArr){
       S[destinoArr][editando.i] = nuevo;
+      finalIndex = editando.i;
     } else {
       S[editando.src].splice(editando.i,1);
       S[destinoArr].push(nuevo);
+      finalIndex = S[destinoArr].length-1;
     }
+    const volverA = {src:destinoArr, i:finalIndex};
     cancelarEdicion(false);
     persistir(); renderAll(); toast('Movimiento actualizado ✓');
+    irAMovimiento(volverA);
+    return;
   } else {
     S[destinoArr].push(nuevo);
     persistir(); renderAll(); toast('Movimiento guardado ✓');
@@ -739,15 +785,24 @@ function promptClasificacion(cuentaDef){
   return `Eres un asistente que estructura extractos bancarios españoles. Analiza el extracto que te adjunto (texto, foto o PDF) y devuelve SOLO un array JSON (sin markdown, sin explicaciones, sin texto antes ni después) donde cada elemento es un movimiento con estos campos:
 - "fecha": formato "YYYY-MM-DD" (asume año 2026 si no aparece)
 - "desc": descripción corta y limpia del movimiento
-- "tipo": "ingreso" (dinero que entra), "gasto" (dinero que sale), "traspaso" (transferencia entre cuentas del usuario: BBVA, Trade Republic, N26, Deutsche Bank, Revolut, o la cuenta compartida "Común Santander") o "inversion" (dinero que sale hacia un plan de inversión, plan de ahorro automático o compra/venta de un activo, normalmente en Trade Republic)
+- "tipo": "ingreso" (dinero que entra), "gasto" (dinero que sale), "traspaso" (transferencia entre cuentas del usuario: BBVA, Trade Republic, N26, Deutsche Bank, Revolut, "Común Santander" o "BBVA Metas") o "inversion" (dinero que sale hacia un plan de inversión, plan de ahorro automático o compra/venta de un activo, normalmente en Trade Republic)
 - "cat": para ingresos una de: ${JSON.stringify(CATS_ING)}. Para gastos una de: ${JSON.stringify(CATS_GAS)}. Para traspasos: "${CAT_TRASPASO}". Para inversiones una de: ${JSON.stringify(CATS_INV)} (usa "Plan de Inversión" para aportaciones periódicas/Sparplan, "Plan de Ahorro (Saveback)" para el cashback automático invertido de compras con tarjeta, e "Inversión" para compras puntuales sin más detalle).
 - "importe": número positivo con decimales (usa punto decimal)
 - "cuenta": la cuenta DUEÑA de este extracto (normalmente "${cuentaDef}", salvo que el propio extracto indique claramente que pertenece a otra cuenta del usuario). Para ingresos y gastos, casi siempre es esta misma cuenta en todas las filas, ya que un extracto normalmente pertenece a una única cuenta.
-- "destino": SOLO si "tipo" es "traspaso" — analiza con cuidado la descripción de cada traspaso (beneficiario, concepto, referencia, IBAN parcial, nombre del banco mencionado) para deducir a qué cuenta del usuario fue: BBVA, Trade Republic, N26, Deutsche Bank, Revolut o "Común Santander". Si el concepto es genérico ("Transferencia", "Traspaso", un nombre de persona, un IBAN que no reconoces) y NO tienes una pista razonable de cuál de esas cuentas es, deja "destino": null — NO ADIVINES ni pongas una cuenta al azar, es preferible dejarlo en null para que el usuario lo revise a mano. Aplica el mismo criterio de honestidad a "cuenta" si por algún motivo el origen tampoco está claro: mejor null que una suposición.
+- "destino": SOLO si "tipo" es "traspaso" — analiza con cuidado la descripción de cada traspaso (beneficiario, concepto, referencia, IBAN parcial, nombre del banco mencionado) para deducir a qué cuenta del usuario fue: BBVA, Trade Republic, N26, Deutsche Bank, Revolut, "Común Santander" o "BBVA Metas". Si el concepto es genérico ("Transferencia", "Traspaso", un nombre de persona, un IBAN que no reconoces) y NO tienes una pista razonable de cuál de esas cuentas es, deja "destino": null — NO ADIVINES ni pongas una cuenta al azar, es preferible dejarlo en null para que el usuario lo revise a mano. Aplica el mismo criterio de honestidad a "cuenta" si por algún motivo el origen tampoco está claro: mejor null que una suposición.
+- "pago": SOLO si "tipo" es "gasto" — el método de pago si se puede deducir: "Débito", "Crédito", "Efectivo", "Bizum" o "PayPal". Si la descripción contiene la palabra "bizum" (en cualquier variación de mayúsculas), usa siempre "pago": "Bizum".
 
-Reglas de clasificación: supermercados/restaurantes/cafeterías → Alimentación; gasolineras/taxi/Cabify/metro → Transporte; luz/agua/gas → Suministros; móvil/internet → Telecomunicaciones; farmacia/médico → Salud y Farmacia; cine/bolos/conciertos → Ocio; Netflix/Disney/Spotify/HBO → Entretenimiento; ropa/calzado → Ropa y Personal; peluquería/perfumería → Cosmética; librerías → Libros; Games Workshop/miniaturas/pinturas de modelismo → Warhammer; vuelos/hoteles/Airbnb → Viajes; nóminas → Salario Neto; venta de acciones/ETFs con ingreso de efectivo → "Venta de acciones"; movimientos de Trade Republic hacia "Sparplan"/plan de inversión/Saveback/compra de un activo → tipo "inversion", NUNCA los clasifiques como "Otros Gastos"; una transferencia con nombre de una persona o empresa que NO sea una de las cuentas propias del usuario NO es un "traspaso" — clasifícala como "gasto" en la categoría que mejor encaje (o "Otros Gastos"); si no encaja claramente en ningún caso anterior → "Otros Gastos" u "Otros Ingresos".
+Reglas de clasificación generales: supermercados/restaurantes/cafeterías → Alimentación; gasolineras/taxi/Cabify/metro → Transporte; luz/agua/gas → Suministros; móvil/internet → Telecomunicaciones; farmacia/médico → Salud y Farmacia; cine/bolos/conciertos → Ocio; Netflix/Disney/Spotify/HBO → Entretenimiento; ropa/calzado → Ropa y Personal; peluquería/perfumería → Cosmética; librerías → Libros; Games Workshop/miniaturas/pinturas de modelismo → Warhammer; vuelos/hoteles/Airbnb → Viajes; nóminas → Salario Neto; venta de acciones/ETFs con ingreso de efectivo → "Venta de acciones"; movimientos de Trade Republic hacia "Sparplan"/plan de inversión/Saveback/compra de un activo → tipo "inversion", NUNCA los clasifiques como "Otros Gastos"; seguros (hogar, vida, auto...) → "SEGUROS"; alquiler de garaje/plaza de aparcamiento → "ALQUILER (GARAJE)"; Steam/PlayStation Store/Xbox/Nintendo/videojuegos → "VIDEOJUEGOS"; una transferencia con nombre de una persona o empresa que NO sea una de las cuentas propias del usuario NO es un "traspaso" — clasifícala como "gasto" en la categoría que mejor encaje (o "Otros Gastos"); si no encaja claramente en ningún caso anterior → "Otros Gastos" u "Otros Ingresos".
 
-Recuerda: para "destino" (y "cuenta" si aplica), es preferible devolver null y dejarlo pendiente de revisión manual que arriesgarte a asignar la cuenta equivocada — un dato incorrecto es peor que un hueco en blanco.
+Reglas EXACTAS y literales (aplican siempre que el concepto coincida, aunque no encajen en las reglas generales anteriores):
+- Concepto "Traspaso programa tu cuenta - redondeo tarjeta": es tipo "traspaso". Si es un ingreso (dinero que entra), "cuenta": "BBVA Metas" y "destino": "BBVA". Si es un gasto/salida, "cuenta": "BBVA" y "destino": "BBVA Metas".
+- Concepto "Adeudo mensual de tarjeta …4992" (o que mencione la tarjeta terminada en 4992): tipo "gasto", "cat": "Tarjeta Aqua Máxima" (nunca "Otros Gastos").
+- Concepto "Operación financiada con tarjeta …4992" (o que mencione la tarjeta terminada en 4992): tipo "gasto", "cat": "Tarjeta Aqua Máxima" (nunca "Otros Gastos").
+- Concepto "Adeudo mensual de tarjeta …0788" (o que mencione la tarjeta terminada en 0788): tipo "gasto", "cat": "Tarjeta Aqua Mas" (nunca "Otros Gastos").
+- Concepto "Adeudo mensual de tarjeta" sin que se identifique el número de tarjeta: tipo "gasto", "cat": "Tarjeta Aqua Mas" (nunca "Otros Gastos").
+- Si la descripción contiene la palabra "regalo" (en cualquier variación): si el importe es positivo (entra dinero) → tipo "ingreso", "cat": "Regalos"; si el importe es negativo o es una salida de dinero → tipo "gasto", "cat": "Regalos".
+
+Recuerda: para "destino" (y "cuenta" si aplica), es preferible devolver null y dejarlo pendiente de revisión manual que arriesgarte a asignar la cuenta equivocada — un dato incorrecto es peor que un hueco en blanco. Las reglas EXACTAS de arriba tienen prioridad sobre las reglas generales.
 
 Adjunto mi extracto a continuación (o lo pego justo después de este mensaje).`;
 }
@@ -777,11 +832,13 @@ function procesarRespuestaIA(text, cuentaDef){
   text = text.replace(/```json|```/g,'').trim();
   const ini = text.indexOf('['), fin = text.lastIndexOf(']');
   const cuentasValidas = new Set([...S.cuentas.map(c=>c.nombre), ...CUENTAS_EXTERNAS]);
+  const PAGOS_VALIDOS = new Set(['Débito','Crédito','Efectivo','Bizum','PayPal']);
   propuestos = JSON.parse(text.slice(ini, fin+1)).map(m=>({
     fecha:m.fecha, desc:m.desc||'', tipo:['ingreso','gasto','traspaso','inversion'].includes(m.tipo)?m.tipo:'gasto',
     cat:m.cat, importe:Math.abs(parseFloat(m.importe))||0,
     cuenta: (m.tipo==='traspaso') ? (cuentasValidas.has(m.cuenta)?m.cuenta:null) : (m.cuenta||cuentaDef),
     destino: (m.tipo==='traspaso') ? (cuentasValidas.has(m.destino)?m.destino:null) : null,
+    pago: PAGOS_VALIDOS.has(m.pago) ? m.pago : 'Débito',
     incluir:true
   })).filter(m=>m.importe>0);
   propuestos.forEach(m=> m.pendiente = m.tipo==='traspaso' && (!m.cuenta || !m.destino));
@@ -896,7 +953,7 @@ function confirmarImport(){
       S.inversiones.push({fecha:m.fecha,desc:m.desc,importe:m.importe,broker:m.cuenta||cuentaDef,comision:0,numAcciones:null,tipoOp:'Compra',ticker:null,precio:null,cat,pendiente:true});
     } else {
       const cat = CATS_GAS.includes(m.cat)?m.cat:CATS_GAS[CATS_GAS.length-1];
-      S.gastos.push({fecha:m.fecha,desc:m.desc,cat,importe:m.importe,pago:'Débito',origen:m.cuenta||cuentaDef,destino:null});
+      S.gastos.push({fecha:m.fecha,desc:m.desc,cat,importe:m.importe,pago:m.pago||'Débito',origen:m.cuenta||cuentaDef,destino:null});
     }
     n++;
   });
@@ -1027,6 +1084,14 @@ function renderPendientes(){
     ? 'Ningún pendiente coincide con ese filtro.'
     : 'No tienes ningún movimiento pendiente de revisar 🎉';
 }
+function snapshotPendientes(){
+  const snap = {};
+  document.querySelectorAll('#tablaPendInv input, #tablaPendTra select').forEach(el=>{ if(el.id) snap[el.id]=el.value; });
+  return snap;
+}
+function restaurarPendientes(snap){
+  Object.keys(snap).forEach(id=>{ const el=document.getElementById(id); if(el) el.value=snap[id]; });
+}
 function resolverPendiente(i){
   const t = document.getElementById('pTicker'+i).value.trim();
   const n = parseFloat(document.getElementById('pNum'+i).value);
@@ -1036,12 +1101,14 @@ function resolverPendiente(i){
   if(!isNaN(n)) S.inversiones[i].numAcciones = n;
   if(!isNaN(p)) S.inversiones[i].precio = p;
   S.inversiones[i].pendiente = false;
-  persistir(); renderAll(); toast('Inversión completada ✓');
+  const snap = snapshotPendientes(); delete snap['pTicker'+i]; delete snap['pNum'+i]; delete snap['pPrecio'+i];
+  persistir(); renderAll(); restaurarPendientes(snap); toast('Inversión completada ✓');
 }
 function descartarPendiente(i){
   if(!confirm('¿Quitar el aviso? Seguirá contando como salida de dinero de la cuenta, pero no aparecerá en Cartera de Valores.')) return;
   S.inversiones[i].pendiente = false;
-  persistir(); renderAll(); toast('Aviso descartado');
+  const snap = snapshotPendientes(); delete snap['pTicker'+i]; delete snap['pNum'+i]; delete snap['pPrecio'+i];
+  persistir(); renderAll(); restaurarPendientes(snap); toast('Aviso descartado');
 }
 function resolverPendienteTraspaso(i){
   const o = document.getElementById('pOrigen'+i).value;
@@ -1050,12 +1117,14 @@ function resolverPendienteTraspaso(i){
   S.gastos[i].origen = o;
   S.gastos[i].destino = d;
   S.gastos[i].pendiente = false;
-  persistir(); renderAll(); toast('Traspaso completado ✓');
+  const snap = snapshotPendientes(); delete snap['pOrigen'+i]; delete snap['pDestino'+i];
+  persistir(); renderAll(); restaurarPendientes(snap); toast('Traspaso completado ✓');
 }
 function descartarPendienteTraspaso(i){
   if(!confirm('¿Quitar el aviso? La cuenta que falte no quedará ajustada (el movimiento seguirá contando en la que sí se conozca).')) return;
   S.gastos[i].pendiente = false;
-  persistir(); renderAll(); toast('Aviso descartado');
+  const snap = snapshotPendientes(); delete snap['pOrigen'+i]; delete snap['pDestino'+i];
+  persistir(); renderAll(); restaurarPendientes(snap); toast('Aviso descartado');
 }
 
 /* ── Utilidades ── */
