@@ -498,6 +498,7 @@ function promptClasificacion(cuentaDef){
 - "cat": para ingresos una de: ${JSON.stringify(CATS_ING)}. Para gastos una de: ${JSON.stringify(CATS_GAS)}. Para traspasos: "${CAT_TRASPASO}".
 - "importe": número positivo con decimales (usa punto decimal)
 - "cuenta": "${cuentaDef}" salvo que el extracto indique otra de las cuentas del usuario
+- "destino": SOLO si "tipo" es "traspaso" — la cuenta de destino de la transferencia, si se puede deducir del extracto (si no, deja "cuenta" como origen y no te preocupes, el usuario podrá elegir el destino manualmente)
 
 Reglas de clasificación: supermercados/restaurantes/cafeterías → Alimentación; gasolineras/taxi/Cabify/metro → Transporte; luz/agua/gas → Suministros; móvil/internet → Telecomunicaciones; farmacia/médico → Salud y Farmacia; cine/bolos/conciertos → Ocio; Netflix/Disney/Spotify/HBO → Entretenimiento; ropa/calzado → Ropa y Personal; peluquería/perfumería → Cosmética; librerías → Libros; Games Workshop/miniaturas/pinturas de modelismo → Warhammer; vuelos/hoteles/Airbnb → Viajes; nóminas → Salario Neto; si no encaja claramente → "Otros Gastos" u "Otros Ingresos".
 
@@ -530,7 +531,9 @@ function procesarRespuestaIA(text, cuentaDef){
   const ini = text.indexOf('['), fin = text.lastIndexOf(']');
   propuestos = JSON.parse(text.slice(ini, fin+1)).map(m=>({
     fecha:m.fecha, desc:m.desc||'', tipo:['ingreso','gasto','traspaso'].includes(m.tipo)?m.tipo:'gasto',
-    cat:m.cat, importe:Math.abs(parseFloat(m.importe))||0, cuenta:m.cuenta||cuentaDef, incluir:true
+    cat:m.cat, importe:Math.abs(parseFloat(m.importe))||0, cuenta:m.cuenta||cuentaDef,
+    destino: m.destino && S.cuentas.some(c=>c.nombre===m.destino) ? m.destino : (S.cuentas.find(c=>c.nombre!==(m.cuenta||cuentaDef))||{}).nombre || cuentaDef,
+    incluir:true
   })).filter(m=>m.importe>0);
   propuestos.forEach(m=> m.dup = existeDuplicado(m));
   propuestos.forEach(m=>{ if(m.dup) m.incluir=false; });
@@ -600,6 +603,11 @@ function renderReview(){
   const rows = propuestos.map((m,i)=>{
     const cats = m.tipo==='ingreso'?CATS_ING : m.tipo==='traspaso'?[CAT_TRASPASO] : CATS_GAS;
     const cls = m.tipo==='ingreso'?'ing':m.tipo==='traspaso'?'tra':'gas';
+    const cuentaCell = m.tipo==='traspaso'
+      ? `<select onchange="propuestos[${i}].cuenta=this.value">${cuentasOpt(m.cuenta)}</select>
+         <span class="note">→</span>
+         <select onchange="propuestos[${i}].destino=this.value">${cuentasOpt(m.destino)}</select>`
+      : `<select onchange="propuestos[${i}].cuenta=this.value">${cuentasOpt(m.cuenta)}</select>`;
     return `<tr>
       <td><input type="checkbox" ${m.incluir?'checked':''} onchange="propuestos[${i}].incluir=this.checked"></td>
       <td class="num" style="color:var(--muted)">${m.fecha||''}</td>
@@ -609,10 +617,11 @@ function renderReview(){
         <option value="ingreso" ${m.tipo==='ingreso'?'selected':''}>Ingreso</option>
         <option value="traspaso" ${m.tipo==='traspaso'?'selected':''}>Traspaso</option></select></td>
       <td><select onchange="propuestos[${i}].cat=this.value">${optHtml(cats, cats.includes(m.cat)?m.cat:cats[cats.length-1])}</select></td>
+      <td style="white-space:nowrap">${cuentaCell}</td>
       <td class="r num" style="color:var(--${cls})">${fmt(m.importe)}</td></tr>`;
   }).join('');
   el.innerHTML = `<div class="scroll-x"><table>
-    <tr><th></th><th>Fecha</th><th>Descripción</th><th>Tipo</th><th>Categoría</th><th class="r">Importe</th></tr>${rows}</table></div>
+    <tr><th></th><th>Fecha</th><th>Descripción</th><th>Tipo</th><th>Categoría</th><th>Cuenta</th><th class="r">Importe</th></tr>${rows}</table></div>
     <div style="margin-top:14px;display:flex;gap:8px">
       <button class="btn primary" onclick="confirmarImport()">Añadir seleccionados</button>
       <button class="btn" onclick="propuestos=[];renderReview()">Descartar</button>
@@ -625,7 +634,7 @@ function confirmarImport(){
     const cats = m.tipo==='ingreso'?CATS_ING : m.tipo==='traspaso'?[CAT_TRASPASO] : CATS_GAS;
     const cat = cats.includes(m.cat)?m.cat:cats[cats.length-1];
     if(m.tipo==='ingreso') S.ingresos.push({fecha:m.fecha,desc:m.desc,cat,importe:m.importe,cuenta:m.cuenta||cuentaDef});
-    else if(m.tipo==='traspaso') S.gastos.push({fecha:m.fecha,desc:m.desc,cat:CAT_TRASPASO,importe:m.importe,pago:'Débito',origen:m.cuenta||cuentaDef,destino:null});
+    else if(m.tipo==='traspaso') S.gastos.push({fecha:m.fecha,desc:m.desc,cat:CAT_TRASPASO,importe:m.importe,pago:'Débito',origen:m.cuenta||cuentaDef,destino:m.destino||null});
     else S.gastos.push({fecha:m.fecha,desc:m.desc,cat,importe:m.importe,pago:'Débito',origen:m.cuenta||cuentaDef,destino:null});
     n++;
   });
@@ -650,6 +659,13 @@ function borrarCuenta(nombre){
   S.cuentas = S.cuentas.filter(c=>c.nombre!==nombre);
   persistir(); renderAll(); toast('Cuenta eliminada');
 }
+function editarSaldoInicial(nombre, input){
+  const v = parseFloat(input.value);
+  const c = S.cuentas.find(c=>c.nombre===nombre);
+  if(!c || isNaN(v)){ toast('Importe no válido'); renderCuentas(); return; }
+  c.saldoInicial = v;
+  persistir(); renderAll(); toast('Saldo inicial actualizado ✓');
+}
 function renderCuentas(){
   const map = saldosCuentas();
   let totI=0,totF=0;
@@ -658,7 +674,8 @@ function renderCuentas(){
     const fin = s.ini + s.ent + s.traIn - s.sal - s.traOut - s.inv;
     totI+=s.ini; totF+=fin;
     return `<tr><td style="font-weight:600">${c.nombre}</td>
-      <td class="r num">${fmt(s.ini)}</td><td class="r num" style="color:var(--ing)">${fmt(s.ent)}</td>
+      <td class="r"><input type="number" step="0.01" value="${c.saldoInicial}" style="width:110px;text-align:right" onchange="editarSaldoInicial('${c.nombre}',this)"></td>
+      <td class="r num" style="color:var(--ing)">${fmt(s.ent)}</td>
       <td class="r num" style="color:var(--tra)">${fmt(s.traIn)}</td>
       <td class="r num" style="color:var(--gas)">${fmt(s.sal + s.inv)}</td>
       <td class="r num" style="color:var(--tra)">${fmt(s.traOut)}</td>
@@ -668,7 +685,8 @@ function renderCuentas(){
   const vacio = !S.cuentas.length ? `<tr><td colspan="8" class="note" style="text-align:center;padding:20px">Aún no has añadido ninguna cuenta. Usa el formulario de abajo.</td></tr>` : '';
   document.getElementById('tablaCuentas').innerHTML =
     `<tr><th>Cuenta</th><th class="r">Saldo inicial</th><th class="r">Entradas</th><th class="r">Traspasos +</th><th class="r">Salidas</th><th class="r">Traspasos −</th><th class="r">Saldo actual</th><th></th></tr>`
-    + rows + vacio + (S.cuentas.length ? `<tr><td style="font-weight:700">TOTAL</td><td class="r num" style="font-weight:700">${fmt(totI)}</td><td colspan="4"></td><td class="r num ${totF>=0?'pos-val':'neg-val'}" style="font-weight:700">${fmt(totF)}</td><td></td></tr>` : '');
+    + rows + vacio + (S.cuentas.length ? `<tr><td style="font-weight:700">TOTAL</td><td class="r num" style="font-weight:700">${fmt(totI)}</td><td colspan="4"></td><td class="r num ${totF>=0?'pos-val':'neg-val'}" style="font-weight:700">${fmt(totF)}</td><td></td></tr>
+    <tr><td colspan="8" class="note">El saldo inicial es editable — haz clic en la cifra y cámbiala. Útil si no tienes extracto de una cuenta: pon el saldo real de hoy como si fuera el inicial, y registra los movimientos a partir de ahora.</td></tr>` : '');
 }
 function renderCartera(){
   const pos = posicionesCartera();
