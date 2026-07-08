@@ -84,6 +84,7 @@ textarea{width:100%;min-height:180px;font-family:'IBM Plex Mono',monospace;font-
 .scroll-x{overflow-x:auto}
 .dot{display:inline-block;width:9px;height:9px;border-radius:50%;background:#4a5261;vertical-align:2px;margin-right:2px}
 .dot.ok{background:var(--ing)} .dot.off{background:var(--bal)} .dot.busy{background:var(--tra)} .dot.err{background:var(--gas)}
+#navPendBadge{display:inline-block;margin-left:5px;background:var(--bal);color:#1a1408;font-size:10px;font-weight:700;border-radius:9px;padding:1px 6px;vertical-align:2px}
 </style>
 </head>
 <body>
@@ -105,7 +106,7 @@ textarea{width:100%;min-height:180px;font-family:'IBM Plex Mono',monospace;font-
   <button data-tab="movs">Movimientos</button>
   <button data-tab="add">Añadir</button>
   <button data-tab="importar">Importar extracto</button>
-  <button data-tab="cuentas">Cuentas y cartera</button>
+  <button data-tab="cuentas" id="navCuentas">Cuentas y cartera<span id="navPendBadge"></span></button>
 </nav>
 <main>
   <section id="tab-panel">
@@ -139,7 +140,8 @@ textarea{width:100%;min-height:180px;font-family:'IBM Plex Mono',monospace;font-
         <button data-t="inversion">Inversión</button>
       </div>
       <div class="form-grid" id="formGrid"></div>
-      <button class="btn primary" onclick="guardarMov()">Guardar movimiento</button>
+      <button class="btn primary" id="btnGuardarMov" onclick="guardarMov()">Guardar movimiento</button>
+      <button class="btn" id="btnCancelarEdicion" style="display:none" onclick="cancelarEdicion()">Cancelar edición</button>
     </div>
   </section>
 
@@ -184,6 +186,11 @@ textarea{width:100%;min-height:180px;font-family:'IBM Plex Mono',monospace;font-
   </section>
 
   <section id="tab-cuentas" style="display:none">
+    <div class="card scroll-x" id="cardPendientes" style="margin-bottom:14px;display:none">
+      <h3>🕓 Inversiones pendientes de revisar <span id="pendCount"></span></h3>
+      <p class="note" style="margin-bottom:10px">Estos movimientos se descontaron correctamente de la cuenta al importarlos, pero les falta el activo para aparecer en tu Cartera de Valores. Complétalos cuando puedas, o descarta el aviso si no aplica.</p>
+      <table id="tablaPendientes"></table>
+    </div>
     <div class="card scroll-x" style="margin-bottom:14px">
       <h3>Cuentas bancarias</h3>
       <table id="tablaCuentas"></table>
@@ -202,8 +209,9 @@ textarea{width:100%;min-height:180px;font-family:'IBM Plex Mono',monospace;font-
 const DATOS_ORIGINALES = {"ingresos": [], "gastos": [], "inversiones": [], "cuentas": [], "cartera": []};
 
 const MESES = ['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'];
-const CATS_ING = ['Salario Neto','Extras / Dietas','Rentas / Alquiler','Dividendos','Intereses Cuentas Remuneradas','Otros Ingresos'];
+const CATS_ING = ['Salario Neto','Extras / Dietas','Rentas / Alquiler','Dividendos','Venta de acciones','Intereses Cuentas Remuneradas','Otros Ingresos'];
 const CATS_GAS = ['Vivienda (IBI)','Alimentación','Transporte (Gasolina, Bono Transportes)','Suministros (Luz, Agua, Gas)','Telecomunicaciones (Móvil)','Salud y Farmacia','Ocio (Cine, Bolos…)','Entretenimiento (Disney, Netflix…)','Ropa y Personal','Cosmética','Educación','Libros','Warhammer','Viajes','Donaciones','Otros Gastos'];
+const CATS_INV = ['Plan de Inversión','Inversión','Plan de Ahorro (Saveback)'];
 const CAT_TRASPASO = 'Traspaso a Cuenta Bancaria';
 const LS_KEY = 'finanzas2026_v1';
 
@@ -277,8 +285,8 @@ function movsUnificados(){
   const out = [];
   S.ingresos.forEach((m,i)=> out.push({...m, tipo:'ingreso', _src:'ingresos', _i:i}));
   S.gastos.forEach((m,i)=> out.push({...m, tipo: esTraspaso(m)?'traspaso':'gasto', _src:'gastos', _i:i}));
-  S.inversiones.forEach((m,i)=> out.push({...m, tipo:'inversion', cat:'Acciones / ETFs', _src:'inversiones', _i:i,
-    desc:(m.tipoOp||'')+' '+(m.ticker||m.desc||''), cuenta:m.broker}));
+  S.inversiones.forEach((m,i)=> out.push({...m, tipo:'inversion', cat:m.cat||(m.ticker?'Acciones / ETFs':'Inversión'), _src:'inversiones', _i:i,
+    desc:(m.tipoOp||'')+' '+(m.ticker||m.desc||m.cat||''), cuenta:m.broker}));
   out.sort((a,b)=> (b.fecha||'').localeCompare(a.fecha||''));
   return out;
 }
@@ -399,6 +407,16 @@ function renderResumen(){
   filas.push(`<tr><td style="font-weight:700">TOTAL GASTOS</td><td class="r num" style="font-weight:700;color:var(--gas)">${fmt(totGas)}</td><td></td></tr>`);
   const tras = S.gastos.filter(m=>esTraspaso(m)&&filtro(m)).reduce((a,m)=>a+m.importe,0);
   if(tras) filas.push(`<tr><td style="color:var(--tra)">Traspasos entre cuentas (no computan)</td><td class="r num" style="color:var(--tra)">${fmt(tras)}</td><td></td></tr>`);
+  const compras = S.inversiones.filter(m=>m.tipoOp==='Compra'&&filtro(m));
+  const totInv = compras.reduce((a,m)=>a+m.importe,0);
+  if(totInv){
+    filas.push(`<tr><th colspan="3" style="color:var(--inv)">📊 Inversiones (compras, no computan como gasto)</th></tr>`);
+    [...CATS_INV,'Acciones / ETFs'].forEach(c=>{
+      const v = compras.filter(m=>(m.cat||(m.ticker?'Acciones / ETFs':'Inversión'))===c).reduce((a,m)=>a+m.importe,0);
+      if(v) filas.push(`<tr><td>${c}</td><td class="r num">${fmt(v)}</td><td class="r num" style="color:var(--muted)">${(v/totInv*100).toFixed(1)}%</td></tr>`);
+    });
+    filas.push(`<tr><td style="font-weight:700">TOTAL INVERTIDO</td><td class="r num" style="font-weight:700;color:var(--inv)">${fmt(totInv)}</td><td></td></tr>`);
+  }
   document.getElementById('tablaResumen').innerHTML = filas.join('');
 }
 function renderPanel(){ renderMonthStrip(); renderKpis(); renderCharts(); renderPatrimonio(); renderResumen(); }
@@ -408,7 +426,7 @@ function renderFiltros(){
   const fMes = document.getElementById('fMes');
   if(fMes.options.length===1) MESES.forEach((m,i)=> fMes.add(new Option(m,i)));
   const fCat = document.getElementById('fCat');
-  if(fCat.options.length===1) [...CATS_ING,...CATS_GAS,CAT_TRASPASO,'Acciones / ETFs'].forEach(c=> fCat.add(new Option(c,c)));
+  if(fCat.options.length===1) [...CATS_ING,...CATS_GAS,CAT_TRASPASO,...CATS_INV,'Acciones / ETFs'].forEach(c=> fCat.add(new Option(c,c)));
 }
 function renderMovs(){
   const tipo = document.getElementById('fTipo').value;
@@ -424,10 +442,10 @@ function renderMovs(){
     const cu = m.tipo==='traspaso' ? `${m.origen||''} → ${m.destino||''}` : (m.cuenta||m.origen||'');
     const cls = m.tipo==='ingreso'?'ing':m.tipo==='gasto'?'gas':m.tipo==='inversion'?'inv':'tra';
     const sign = m.tipo==='ingreso'?'+':'−';
-    return `<tr><td class="num" style="color:var(--muted)">${m.fecha||''}</td><td>${m.desc||''}</td>
+    return `<tr><td class="num" style="color:var(--muted)">${m.fecha||''}</td><td>${m.desc||''} ${m.pendiente?'<span class="dup">🕓 pendiente</span>':''}</td>
       <td><span class="tag ${cls}">${m.cat||''}</span></td><td>${cu}</td>
       <td class="r num" style="color:var(--${cls})">${sign} ${fmt(m.importe)}</td>
-      <td class="r"><button class="del-btn" onclick="borrarMov('${m._src}',${m._i})" title="Eliminar">✕</button></td></tr>`;
+      <td class="r" style="white-space:nowrap"><button class="del-btn" onclick="editarMov('${m._src}',${m._i})" title="Editar">✏️</button><button class="del-btn" onclick="borrarMov('${m._src}',${m._i})" title="Eliminar">✕</button></td></tr>`;
   }).join('');
   document.getElementById('tablaMovs').innerHTML =
     `<tr><th>Fecha</th><th>Descripción</th><th>Categoría</th><th>Cuenta</th><th class="r">Importe</th><th></th></tr>` +
@@ -435,6 +453,7 @@ function renderMovs(){
 }
 function borrarMov(src,i){
   if(!confirm('¿Eliminar este movimiento?')) return;
+  if(editando && editando.src===src && editando.i===i) cancelarEdicion(true);
   S[src].splice(i,1); persistir(); renderAll(); toast('Movimiento eliminado');
 }
 
@@ -458,12 +477,23 @@ function renderForm(){
     `<div class="fld"><label>Cuenta origen</label><select id="aOrigen">${cuentasOpt('BBVA')}</select></div>
      <div class="fld"><label>Cuenta destino</label><select id="aDestino">${cuentasOpt('Trade Republic')}</select></div>`;
   else g.innerHTML = base +
-    `<div class="fld"><label>Operación</label><select id="aOp"><option>Compra</option><option>Venta</option></select></div>
-     <div class="fld"><label>Activo / Ticker</label><input type="text" id="aTicker" placeholder="p. ej. CORE MSCI WORLD"></div>
-     <div class="fld"><label>Nº acciones</label><input type="number" step="any" id="aNum"></div>
-     <div class="fld"><label>Precio por acción (€)</label><input type="number" step="any" id="aPrecio"></div>
+    `<div class="fld"><label>Categoría</label><select id="aCatInv" onchange="toggleTickerFields()">
+       <option value="">Compra/venta de activo (con ticker)</option>
+       ${optHtml(CATS_INV)}
+     </select></div>
+     <div class="fld"><label>Operación</label><select id="aOp"><option>Compra</option><option>Venta</option></select></div>
+     <div class="fld" id="fldTicker"><label>Activo / Ticker</label><input type="text" id="aTicker" placeholder="p. ej. CORE MSCI WORLD"></div>
+     <div class="fld" id="fldNum"><label>Nº acciones</label><input type="number" step="any" id="aNum"></div>
+     <div class="fld" id="fldPrecio"><label>Precio por acción (€)</label><input type="number" step="any" id="aPrecio"></div>
      <div class="fld"><label>Comisión (€)</label><input type="number" step="0.01" id="aCom" value="0"></div>
      <div class="fld"><label>Broker</label><select id="aBroker">${cuentasOpt('Trade Republic')}</select></div>`;
+}
+function toggleTickerFields(){
+  const cat = document.getElementById('aCatInv')?.value;
+  const mostrar = !cat; // solo si es "con ticker" (valor vacío)
+  ['fldTicker','fldNum','fldPrecio'].forEach(id=>{
+    const el = document.getElementById(id); if(el) el.style.display = mostrar ? '' : 'none';
+  });
 }
 document.getElementById('tipoSeg').addEventListener('click',e=>{
   if(e.target.tagName!=='BUTTON') return;
@@ -471,16 +501,79 @@ document.getElementById('tipoSeg').addEventListener('click',e=>{
   [...document.getElementById('tipoSeg').children].forEach(b=> b.className = b===e.target ? 'sel-'+{gasto:'gas',ingreso:'ing',traspaso:'tra',inversion:'inv'}[tipoAdd] : '');
   renderForm();
 });
+let editando = null; // {src:'ingresos'|'gastos'|'inversiones', i:number} mientras se edita un movimiento existente
 function guardarMov(){
   const v = id => document.getElementById(id)?.value;
   const fecha = v('aFecha'), desc = v('aDesc')||'', importe = parseFloat(v('aImporte'));
   if(!fecha || !(importe>0)){ toast('Indica fecha e importe válidos'); return; }
-  if(tipoAdd==='gasto') S.gastos.push({fecha,desc,cat:v('aCat'),importe,pago:v('aPago'),origen:v('aOrigen'),destino:null});
-  else if(tipoAdd==='ingreso') S.ingresos.push({fecha,desc,cat:v('aCat'),importe,cuenta:v('aCuenta')});
-  else if(tipoAdd==='traspaso') S.gastos.push({fecha,desc:desc||('Traspaso a '+v('aDestino')),cat:CAT_TRASPASO,importe,pago:'Débito',origen:v('aOrigen'),destino:v('aDestino')});
-  else S.inversiones.push({fecha,desc:v('aTicker'),importe,broker:v('aBroker'),comision:parseFloat(v('aCom'))||0,numAcciones:parseFloat(v('aNum'))||null,tipoOp:v('aOp'),ticker:v('aTicker'),precio:parseFloat(v('aPrecio'))||null});
-  persistir(); renderAll(); toast('Movimiento guardado ✓');
-  document.getElementById('aDesc').value=''; document.getElementById('aImporte').value='';
+  let nuevo, destinoArr;
+  if(tipoAdd==='gasto'){ nuevo = {fecha,desc,cat:v('aCat'),importe,pago:v('aPago'),origen:v('aOrigen'),destino:null}; destinoArr='gastos'; }
+  else if(tipoAdd==='ingreso'){ nuevo = {fecha,desc,cat:v('aCat'),importe,cuenta:v('aCuenta')}; destinoArr='ingresos'; }
+  else if(tipoAdd==='traspaso'){ nuevo = {fecha,desc:desc||('Traspaso a '+v('aDestino')),cat:CAT_TRASPASO,importe,pago:'Débito',origen:v('aOrigen'),destino:v('aDestino')}; destinoArr='gastos'; }
+  else { const catInv = v('aCatInv')||null, ticker = v('aTicker')||null;
+    nuevo = {fecha,desc:desc||ticker||catInv,importe,broker:v('aBroker'),comision:parseFloat(v('aCom'))||0,numAcciones:parseFloat(v('aNum'))||null,tipoOp:v('aOp'),ticker,precio:parseFloat(v('aPrecio'))||null,cat:catInv,pendiente:!ticker};
+    destinoArr='inversiones'; }
+
+  if(editando){
+    if(editando.src===destinoArr){
+      S[destinoArr][editando.i] = nuevo;
+    } else {
+      S[editando.src].splice(editando.i,1);
+      S[destinoArr].push(nuevo);
+    }
+    cancelarEdicion(false);
+    persistir(); renderAll(); toast('Movimiento actualizado ✓');
+  } else {
+    S[destinoArr].push(nuevo);
+    persistir(); renderAll(); toast('Movimiento guardado ✓');
+  }
+  const dEl=document.getElementById('aDesc'), iEl=document.getElementById('aImporte');
+  if(dEl) dEl.value=''; if(iEl) iEl.value='';
+}
+function editarMov(src, i){
+  const m = S[src][i];
+  const tipo = src==='ingresos' ? 'ingreso' : src==='inversiones' ? 'inversion' : (m.cat===CAT_TRASPASO ? 'traspaso' : 'gasto');
+  tipoAdd = tipo;
+  [...document.getElementById('tipoSeg').children].forEach(b=> b.className = b.dataset.t===tipo ? 'sel-'+{gasto:'gas',ingreso:'ing',traspaso:'tra',inversion:'inv'}[tipo] : '');
+  renderForm();
+  document.getElementById('aFecha').value = m.fecha||'';
+  document.getElementById('aDesc').value = m.desc||'';
+  document.getElementById('aImporte').value = m.importe||'';
+  if(tipo==='gasto'){
+    document.getElementById('aCat').value = m.cat;
+    document.getElementById('aOrigen').value = m.origen;
+    document.getElementById('aPago').value = m.pago||'Débito';
+  } else if(tipo==='ingreso'){
+    document.getElementById('aCat').value = m.cat;
+    document.getElementById('aCuenta').value = m.cuenta;
+  } else if(tipo==='traspaso'){
+    document.getElementById('aOrigen').value = m.origen;
+    document.getElementById('aDestino').value = m.destino;
+  } else {
+    document.getElementById('aCatInv').value = m.cat||'';
+    toggleTickerFields();
+    document.getElementById('aOp').value = m.tipoOp||'Compra';
+    if(document.getElementById('aTicker')) document.getElementById('aTicker').value = m.ticker||'';
+    if(document.getElementById('aNum')) document.getElementById('aNum').value = m.numAcciones||'';
+    if(document.getElementById('aPrecio')) document.getElementById('aPrecio').value = m.precio||'';
+    document.getElementById('aCom').value = m.comision||0;
+    document.getElementById('aBroker').value = m.broker;
+  }
+  editando = {src, i};
+  document.getElementById('btnGuardarMov').textContent = 'Guardar cambios';
+  document.getElementById('btnCancelarEdicion').style.display = '';
+  [...document.getElementById('nav').children].forEach(b=> b.classList.toggle('active', b.dataset.tab==='add'));
+  ['panel','movs','add','importar','cuentas'].forEach(t=> document.getElementById('tab-'+t).style.display = t==='add' ? '' : 'none');
+  window.scrollTo({top:0,behavior:'smooth'});
+}
+function cancelarEdicion(limpiarCampos){
+  editando = null;
+  document.getElementById('btnGuardarMov').textContent = 'Guardar movimiento';
+  document.getElementById('btnCancelarEdicion').style.display = 'none';
+  if(limpiarCampos!==false){
+    const dEl=document.getElementById('aDesc'), iEl=document.getElementById('aImporte');
+    if(dEl) dEl.value=''; if(iEl) iEl.value='';
+  }
 }
 
 document.getElementById('modoImportSeg').addEventListener('click',e=>{
@@ -494,13 +587,13 @@ function promptClasificacion(cuentaDef){
   return `Eres un asistente que estructura extractos bancarios españoles. Analiza el extracto que te adjunto (texto, foto o PDF) y devuelve SOLO un array JSON (sin markdown, sin explicaciones, sin texto antes ni después) donde cada elemento es un movimiento con estos campos:
 - "fecha": formato "YYYY-MM-DD" (asume año 2026 si no aparece)
 - "desc": descripción corta y limpia del movimiento
-- "tipo": "ingreso" (dinero que entra), "gasto" (dinero que sale) o "traspaso" (transferencia entre cuentas propias del usuario: BBVA, Trade Republic, N26, Deutsche Bank, Revolut)
-- "cat": para ingresos una de: ${JSON.stringify(CATS_ING)}. Para gastos una de: ${JSON.stringify(CATS_GAS)}. Para traspasos: "${CAT_TRASPASO}".
+- "tipo": "ingreso" (dinero que entra), "gasto" (dinero que sale), "traspaso" (transferencia entre cuentas propias del usuario: BBVA, Trade Republic, N26, Deutsche Bank, Revolut) o "inversion" (dinero que sale hacia un plan de inversión, plan de ahorro automático o compra/venta de un activo, normalmente en Trade Republic)
+- "cat": para ingresos una de: ${JSON.stringify(CATS_ING)}. Para gastos una de: ${JSON.stringify(CATS_GAS)}. Para traspasos: "${CAT_TRASPASO}". Para inversiones una de: ${JSON.stringify(CATS_INV)} (usa "Plan de Inversión" para aportaciones periódicas/Sparplan, "Plan de Ahorro (Saveback)" para el cashback automático invertido de compras con tarjeta, e "Inversión" para compras puntuales sin más detalle).
 - "importe": número positivo con decimales (usa punto decimal)
 - "cuenta": "${cuentaDef}" salvo que el extracto indique otra de las cuentas del usuario
 - "destino": SOLO si "tipo" es "traspaso" — la cuenta de destino de la transferencia, si se puede deducir del extracto (si no, deja "cuenta" como origen y no te preocupes, el usuario podrá elegir el destino manualmente)
 
-Reglas de clasificación: supermercados/restaurantes/cafeterías → Alimentación; gasolineras/taxi/Cabify/metro → Transporte; luz/agua/gas → Suministros; móvil/internet → Telecomunicaciones; farmacia/médico → Salud y Farmacia; cine/bolos/conciertos → Ocio; Netflix/Disney/Spotify/HBO → Entretenimiento; ropa/calzado → Ropa y Personal; peluquería/perfumería → Cosmética; librerías → Libros; Games Workshop/miniaturas/pinturas de modelismo → Warhammer; vuelos/hoteles/Airbnb → Viajes; nóminas → Salario Neto; si no encaja claramente → "Otros Gastos" u "Otros Ingresos".
+Reglas de clasificación: supermercados/restaurantes/cafeterías → Alimentación; gasolineras/taxi/Cabify/metro → Transporte; luz/agua/gas → Suministros; móvil/internet → Telecomunicaciones; farmacia/médico → Salud y Farmacia; cine/bolos/conciertos → Ocio; Netflix/Disney/Spotify/HBO → Entretenimiento; ropa/calzado → Ropa y Personal; peluquería/perfumería → Cosmética; librerías → Libros; Games Workshop/miniaturas/pinturas de modelismo → Warhammer; vuelos/hoteles/Airbnb → Viajes; nóminas → Salario Neto; venta de acciones/ETFs con ingreso de efectivo → "Venta de acciones"; movimientos de Trade Republic hacia "Sparplan"/plan de inversión/Saveback/compra de un activo → tipo "inversion", NUNCA los clasifiques como "Otros Gastos"; si no encaja claramente en ningún caso anterior → "Otros Gastos" u "Otros Ingresos".
 
 Adjunto mi extracto a continuación (o lo pego justo después de este mensaje).`;
 }
@@ -530,7 +623,7 @@ function procesarRespuestaIA(text, cuentaDef){
   text = text.replace(/```json|```/g,'').trim();
   const ini = text.indexOf('['), fin = text.lastIndexOf(']');
   propuestos = JSON.parse(text.slice(ini, fin+1)).map(m=>({
-    fecha:m.fecha, desc:m.desc||'', tipo:['ingreso','gasto','traspaso'].includes(m.tipo)?m.tipo:'gasto',
+    fecha:m.fecha, desc:m.desc||'', tipo:['ingreso','gasto','traspaso','inversion'].includes(m.tipo)?m.tipo:'gasto',
     cat:m.cat, importe:Math.abs(parseFloat(m.importe))||0, cuenta:m.cuenta||cuentaDef,
     destino: m.destino && S.cuentas.some(c=>c.nombre===m.destino) ? m.destino : (S.cuentas.find(c=>c.nombre!==(m.cuenta||cuentaDef))||{}).nombre || cuentaDef,
     incluir:true
@@ -601,8 +694,8 @@ function renderReview(){
   const el = document.getElementById('impReview');
   if(!propuestos.length){ el.innerHTML=''; return; }
   const rows = propuestos.map((m,i)=>{
-    const cats = m.tipo==='ingreso'?CATS_ING : m.tipo==='traspaso'?[CAT_TRASPASO] : CATS_GAS;
-    const cls = m.tipo==='ingreso'?'ing':m.tipo==='traspaso'?'tra':'gas';
+    const cats = m.tipo==='ingreso'?CATS_ING : m.tipo==='traspaso'?[CAT_TRASPASO] : m.tipo==='inversion'?CATS_INV : CATS_GAS;
+    const cls = m.tipo==='ingreso'?'ing':m.tipo==='traspaso'?'tra':m.tipo==='inversion'?'inv':'gas';
     const cuentaCell = m.tipo==='traspaso'
       ? `<select onchange="propuestos[${i}].cuenta=this.value">${cuentasOpt(m.cuenta)}</select>
          <span class="note">→</span>
@@ -615,7 +708,8 @@ function renderReview(){
       <td><select onchange="propuestos[${i}].tipo=this.value;propuestos[${i}].cat=null;renderReview()">
         <option value="gasto" ${m.tipo==='gasto'?'selected':''}>Gasto</option>
         <option value="ingreso" ${m.tipo==='ingreso'?'selected':''}>Ingreso</option>
-        <option value="traspaso" ${m.tipo==='traspaso'?'selected':''}>Traspaso</option></select></td>
+        <option value="traspaso" ${m.tipo==='traspaso'?'selected':''}>Traspaso</option>
+        <option value="inversion" ${m.tipo==='inversion'?'selected':''}>Inversión</option></select></td>
       <td><select onchange="propuestos[${i}].cat=this.value">${optHtml(cats, cats.includes(m.cat)?m.cat:cats[cats.length-1])}</select></td>
       <td style="white-space:nowrap">${cuentaCell}</td>
       <td class="r num" style="color:var(--${cls})">${fmt(m.importe)}</td></tr>`;
@@ -631,11 +725,18 @@ function confirmarImport(){
   let n=0;
   const cuentaDef = document.getElementById('impCuenta').value;
   propuestos.filter(m=>m.incluir).forEach(m=>{
-    const cats = m.tipo==='ingreso'?CATS_ING : m.tipo==='traspaso'?[CAT_TRASPASO] : CATS_GAS;
-    const cat = cats.includes(m.cat)?m.cat:cats[cats.length-1];
-    if(m.tipo==='ingreso') S.ingresos.push({fecha:m.fecha,desc:m.desc,cat,importe:m.importe,cuenta:m.cuenta||cuentaDef});
-    else if(m.tipo==='traspaso') S.gastos.push({fecha:m.fecha,desc:m.desc,cat:CAT_TRASPASO,importe:m.importe,pago:'Débito',origen:m.cuenta||cuentaDef,destino:m.destino||null});
-    else S.gastos.push({fecha:m.fecha,desc:m.desc,cat,importe:m.importe,pago:'Débito',origen:m.cuenta||cuentaDef,destino:null});
+    if(m.tipo==='ingreso'){
+      const cat = CATS_ING.includes(m.cat)?m.cat:CATS_ING[CATS_ING.length-1];
+      S.ingresos.push({fecha:m.fecha,desc:m.desc,cat,importe:m.importe,cuenta:m.cuenta||cuentaDef});
+    } else if(m.tipo==='traspaso'){
+      S.gastos.push({fecha:m.fecha,desc:m.desc,cat:CAT_TRASPASO,importe:m.importe,pago:'Débito',origen:m.cuenta||cuentaDef,destino:m.destino||null});
+    } else if(m.tipo==='inversion'){
+      const cat = CATS_INV.includes(m.cat)?m.cat:CATS_INV[1];
+      S.inversiones.push({fecha:m.fecha,desc:m.desc,importe:m.importe,broker:m.cuenta||cuentaDef,comision:0,numAcciones:null,tipoOp:'Compra',ticker:null,precio:null,cat,pendiente:true});
+    } else {
+      const cat = CATS_GAS.includes(m.cat)?m.cat:CATS_GAS[CATS_GAS.length-1];
+      S.gastos.push({fecha:m.fecha,desc:m.desc,cat,importe:m.importe,pago:'Débito',origen:m.cuenta||cuentaDef,destino:null});
+    }
     n++;
   });
   propuestos=[]; renderReview(); persistir(); renderAll();
@@ -706,6 +807,45 @@ function renderCartera(){
       <td class="r num" style="font-weight:700">${fmt(totVal)}</td>
       <td class="r num ${totVal-totInv>=0?'pos-val':'neg-val'}" style="font-weight:700">${totVal-totInv>=0?'+':''}${fmt(totVal-totInv)}</td></tr>
     <tr><td colspan="8" class="note">Los últimos precios provienen del Excel importado. Registra compras/ventas en «Añadir → Inversión» para actualizar posiciones.</td></tr>`;
+}
+function renderPendientes(){
+  const pend = S.inversiones.map((m,i)=>({...m,_i:i})).filter(m=>m.pendiente);
+  const badge = document.getElementById('navPendBadge');
+  badge.textContent = pend.length ? pend.length : '';
+  const card = document.getElementById('cardPendientes');
+  document.getElementById('pendCount').textContent = pend.length ? `(${pend.length})` : '';
+  if(!pend.length){ card.style.display='none'; return; }
+  card.style.display='';
+  const rows = pend.map(m=>`<tr>
+    <td class="num" style="color:var(--muted)">${m.fecha||''}</td>
+    <td>${m.desc||''}<br><span class="tag inv">${m.cat||''}</span></td>
+    <td>${m.broker||''}</td>
+    <td class="r num">${fmt(m.importe)}</td>
+    <td><input type="text" placeholder="Ticker" id="pTicker${m._i}" style="width:120px"></td>
+    <td><input type="number" step="any" placeholder="Nº acc." id="pNum${m._i}" style="width:80px"></td>
+    <td><input type="number" step="any" placeholder="Precio €" id="pPrecio${m._i}" style="width:80px"></td>
+    <td class="r" style="white-space:nowrap">
+      <button class="btn" style="padding:5px 10px" onclick="resolverPendiente(${m._i})">Guardar</button>
+      <button class="del-btn" onclick="descartarPendiente(${m._i})" title="No es un activo con ticker, quitar aviso">✕</button>
+    </td></tr>`).join('');
+  document.getElementById('tablaPendientes').innerHTML =
+    `<tr><th>Fecha</th><th>Descripción</th><th>Broker</th><th class="r">Importe</th><th>Ticker</th><th>Nº acciones</th><th>Precio</th><th></th></tr>` + rows;
+}
+function resolverPendiente(i){
+  const t = document.getElementById('pTicker'+i).value.trim();
+  const n = parseFloat(document.getElementById('pNum'+i).value);
+  const p = parseFloat(document.getElementById('pPrecio'+i).value);
+  if(!t){ toast('Indica al menos el ticker'); return; }
+  S.inversiones[i].ticker = t;
+  if(!isNaN(n)) S.inversiones[i].numAcciones = n;
+  if(!isNaN(p)) S.inversiones[i].precio = p;
+  S.inversiones[i].pendiente = false;
+  persistir(); renderAll(); toast('Inversión completada ✓');
+}
+function descartarPendiente(i){
+  if(!confirm('¿Quitar el aviso? Seguirá contando como salida de dinero de la cuenta, pero no aparecerá en Cartera de Valores.')) return;
+  S.inversiones[i].pendiente = false;
+  persistir(); renderAll(); toast('Aviso descartado');
 }
 
 /* ── Utilidades ── */
@@ -801,7 +941,7 @@ document.getElementById('nav').addEventListener('click',e=>{
 document.getElementById('tab-importar').style.display='none';
 
 function renderAll(){
-  renderPanel(); renderFiltros(); renderMovs(); renderCuentas(); renderCartera();
+  renderPanel(); renderFiltros(); renderMovs(); renderCuentas(); renderCartera(); renderPendientes();
   const ic = document.getElementById('impCuenta');
   ic.innerHTML=''; S.cuentas.forEach(c=> ic.add(new Option('Cuenta: '+c.nombre, c.nombre)));
   const icm = document.getElementById('impCuentaManual');
