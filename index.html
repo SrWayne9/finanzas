@@ -213,6 +213,9 @@ const CATS_ING = ['Salario Neto','Extras / Dietas','Rentas / Alquiler','Dividend
 const CATS_GAS = ['Vivienda (IBI)','Alimentación','Transporte (Gasolina, Bono Transportes)','Suministros (Luz, Agua, Gas)','Telecomunicaciones (Móvil)','Salud y Farmacia','Ocio (Cine, Bolos…)','Entretenimiento (Disney, Netflix…)','Ropa y Personal','Cosmética','Educación','Libros','Warhammer','Viajes','Donaciones','Otros Gastos'];
 const CATS_INV = ['Plan de Inversión','Inversión','Plan de Ahorro (Saveback)'];
 const CAT_TRASPASO = 'Traspaso a Cuenta Bancaria';
+// Cuentas externas: seleccionables como origen/destino en traspasos, pero NUNCA
+// aparecen en la tabla de "Cuentas bancarias" ni suman saldo propio.
+const CUENTAS_EXTERNAS = ['Común Santander'];
 const LS_KEY = 'finanzas2026_v1';
 
 let S; // estado
@@ -460,6 +463,7 @@ function borrarMov(src,i){
 /* ── Añadir ── */
 function optHtml(arr,sel){ return arr.map(o=>`<option ${o===sel?'selected':''}>${o}</option>`).join(''); }
 function cuentasOpt(sel){ return S.cuentas.length ? optHtml(S.cuentas.map(c=>c.nombre),sel) : '<option disabled selected>Añade una cuenta en "Cuentas y cartera"</option>'; }
+function cuentasOptTraspaso(sel){ return optHtml([...S.cuentas.map(c=>c.nombre), ...CUENTAS_EXTERNAS], sel); }
 function renderForm(){
   const hoy = new Date().toISOString().slice(0,10);
   const g = document.getElementById('formGrid');
@@ -474,8 +478,8 @@ function renderForm(){
     `<div class="fld"><label>Categoría</label><select id="aCat">${optHtml(CATS_ING)}</select></div>
      <div class="fld"><label>Cuenta destino</label><select id="aCuenta">${cuentasOpt('BBVA')}</select></div>`;
   else if(tipoAdd==='traspaso') g.innerHTML = base +
-    `<div class="fld"><label>Cuenta origen</label><select id="aOrigen">${cuentasOpt('BBVA')}</select></div>
-     <div class="fld"><label>Cuenta destino</label><select id="aDestino">${cuentasOpt('Trade Republic')}</select></div>`;
+    `<div class="fld"><label>Cuenta origen</label><select id="aOrigen">${cuentasOptTraspaso('BBVA')}</select></div>
+     <div class="fld"><label>Cuenta destino</label><select id="aDestino">${cuentasOptTraspaso('Trade Republic')}</select></div>`;
   else g.innerHTML = base +
     `<div class="fld"><label>Categoría</label><select id="aCatInv" onchange="toggleTickerFields()">
        <option value="">Compra/venta de activo (con ticker)</option>
@@ -587,7 +591,7 @@ function promptClasificacion(cuentaDef){
   return `Eres un asistente que estructura extractos bancarios españoles. Analiza el extracto que te adjunto (texto, foto o PDF) y devuelve SOLO un array JSON (sin markdown, sin explicaciones, sin texto antes ni después) donde cada elemento es un movimiento con estos campos:
 - "fecha": formato "YYYY-MM-DD" (asume año 2026 si no aparece)
 - "desc": descripción corta y limpia del movimiento
-- "tipo": "ingreso" (dinero que entra), "gasto" (dinero que sale), "traspaso" (transferencia entre cuentas propias del usuario: BBVA, Trade Republic, N26, Deutsche Bank, Revolut) o "inversion" (dinero que sale hacia un plan de inversión, plan de ahorro automático o compra/venta de un activo, normalmente en Trade Republic)
+- "tipo": "ingreso" (dinero que entra), "gasto" (dinero que sale), "traspaso" (transferencia entre cuentas del usuario: BBVA, Trade Republic, N26, Deutsche Bank, Revolut, o la cuenta compartida "Común Santander") o "inversion" (dinero que sale hacia un plan de inversión, plan de ahorro automático o compra/venta de un activo, normalmente en Trade Republic)
 - "cat": para ingresos una de: ${JSON.stringify(CATS_ING)}. Para gastos una de: ${JSON.stringify(CATS_GAS)}. Para traspasos: "${CAT_TRASPASO}". Para inversiones una de: ${JSON.stringify(CATS_INV)} (usa "Plan de Inversión" para aportaciones periódicas/Sparplan, "Plan de Ahorro (Saveback)" para el cashback automático invertido de compras con tarjeta, e "Inversión" para compras puntuales sin más detalle).
 - "importe": número positivo con decimales (usa punto decimal)
 - "cuenta": "${cuentaDef}" salvo que el extracto indique otra de las cuentas del usuario
@@ -625,7 +629,7 @@ function procesarRespuestaIA(text, cuentaDef){
   propuestos = JSON.parse(text.slice(ini, fin+1)).map(m=>({
     fecha:m.fecha, desc:m.desc||'', tipo:['ingreso','gasto','traspaso','inversion'].includes(m.tipo)?m.tipo:'gasto',
     cat:m.cat, importe:Math.abs(parseFloat(m.importe))||0, cuenta:m.cuenta||cuentaDef,
-    destino: m.destino && S.cuentas.some(c=>c.nombre===m.destino) ? m.destino : (S.cuentas.find(c=>c.nombre!==(m.cuenta||cuentaDef))||{}).nombre || cuentaDef,
+    destino: m.destino && [...S.cuentas.map(c=>c.nombre),...CUENTAS_EXTERNAS].includes(m.destino) ? m.destino : (S.cuentas.find(c=>c.nombre!==(m.cuenta||cuentaDef))||{}).nombre || cuentaDef,
     incluir:true
   })).filter(m=>m.importe>0);
   propuestos.forEach(m=> m.dup = existeDuplicado(m));
@@ -697,9 +701,9 @@ function renderReview(){
     const cats = m.tipo==='ingreso'?CATS_ING : m.tipo==='traspaso'?[CAT_TRASPASO] : m.tipo==='inversion'?CATS_INV : CATS_GAS;
     const cls = m.tipo==='ingreso'?'ing':m.tipo==='traspaso'?'tra':m.tipo==='inversion'?'inv':'gas';
     const cuentaCell = m.tipo==='traspaso'
-      ? `<select onchange="propuestos[${i}].cuenta=this.value">${cuentasOpt(m.cuenta)}</select>
+      ? `<select onchange="propuestos[${i}].cuenta=this.value">${cuentasOptTraspaso(m.cuenta)}</select>
          <span class="note">→</span>
-         <select onchange="propuestos[${i}].destino=this.value">${cuentasOpt(m.destino)}</select>`
+         <select onchange="propuestos[${i}].destino=this.value">${cuentasOptTraspaso(m.destino)}</select>`
       : `<select onchange="propuestos[${i}].cuenta=this.value">${cuentasOpt(m.cuenta)}</select>`;
     return `<tr>
       <td><input type="checkbox" ${m.incluir?'checked':''} onchange="propuestos[${i}].incluir=this.checked"></td>
