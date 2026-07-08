@@ -163,7 +163,6 @@ textarea{width:100%;min-height:180px;font-family:'IBM Plex Mono',monospace;font-
         </div>
         <div style="margin-top:10px;display:flex;gap:8px;align-items:center">
           <button class="btn primary" onclick="procesarRespuestaManual()">Procesar respuesta</button>
-          <select id="impCuentaManual"></select>
           <span class="note" id="manualStatus"></span>
         </div>
       </div>
@@ -616,7 +615,7 @@ Recuerda: para "destino" (y "cuenta" si aplica), es preferible devolver null y d
 Adjunto mi extracto a continuación (o lo pego justo después de este mensaje).`;
 }
 function copiarPromptManual(){
-  const cuentaDef = document.getElementById('impCuentaManual').value;
+  const cuentaDef = S.cuentas[0]?.nombre || '';
   const texto = promptClasificacion(cuentaDef);
   navigator.clipboard.writeText(texto).then(()=>{
     toast('Mensaje copiado — pégalo en una conversación con Claude ✓');
@@ -627,7 +626,7 @@ function copiarPromptManual(){
 }
 function procesarRespuestaManual(){
   const texto = document.getElementById('respuestaManual').value.trim();
-  const cuentaDef = document.getElementById('impCuentaManual').value;
+  const cuentaDef = S.cuentas[0]?.nombre || '';
   if(!texto){ toast('Pega primero la respuesta de Claude'); return; }
   const st = document.getElementById('manualStatus');
   try{
@@ -1006,8 +1005,6 @@ function renderAll(){
   renderPanel(); renderFiltros(); renderMovs(); renderCuentas(); renderCartera(); renderPendientes();
   const ic = document.getElementById('impCuenta');
   ic.innerHTML=''; S.cuentas.forEach(c=> ic.add(new Option('Cuenta: '+c.nombre, c.nombre)));
-  const icm = document.getElementById('impCuentaManual');
-  icm.innerHTML=''; S.cuentas.forEach(c=> icm.add(new Option('Cuenta: '+c.nombre, c.nombre)));
 }
 renderForm();
 renderAll();
