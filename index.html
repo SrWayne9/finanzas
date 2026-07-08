@@ -146,17 +146,39 @@ textarea{width:100%;min-height:180px;font-family:'IBM Plex Mono',monospace;font-
   <section id="tab-importar">
     <div class="card" style="max-width:860px">
       <h3>Importar extracto bancario con IA</h3>
-      <p class="note" style="margin-bottom:12px">Pega el texto de tu extracto o sube el archivo (PDF, CSV o TXT) de BBVA, Trade Republic, N26… La IA identificará cada movimiento, lo clasificará en tus categorías y detectará duplicados antes de añadir nada. <strong>Requiere tener configurada la sincronización (⚙)</strong>, ya que el análisis se hace a través de tu proxy de Apps Script.</p>
-      <div style="display:flex;gap:8px;margin-bottom:10px;flex-wrap:wrap">
-        <button class="btn" onclick="document.getElementById('fileExtracto').click()">Subir PDF / CSV / TXT</button>
-        <input type="file" id="fileExtracto" accept=".pdf,.csv,.txt,.tsv" style="display:none" onchange="leerArchivo(this)">
-        <select id="impCuenta"></select>
+      <div class="tipo-seg" id="modoImportSeg" style="margin-bottom:4px">
+        <button data-m="manual" class="sel-ing">Gratis, con Claude (manual)</button>
+        <button data-m="proxy">Automático (tu proxy)</button>
       </div>
-      <textarea id="extractoTexto" placeholder="03/07/2026  MERCADONA COMPRA  -23,45 €&#10;01/07/2026  NOMINA EMPRESA  +2.130,50 €&#10;…"></textarea>
-      <div style="margin-top:12px;display:flex;gap:8px;align-items:center">
-        <button class="btn primary" id="btnAnalizar" onclick="analizarExtracto()">Analizar con IA</button>
-        <span class="note" id="impStatus"></span>
+
+      <div id="modoManual">
+        <p class="note" style="margin-bottom:12px">Sin coste y sin claves de API. Copia el mensaje de abajo, pégalo en una conversación nueva con Claude junto con tu extracto (texto, foto o PDF), y pega aquí la respuesta que te dé.</p>
+        <button class="btn" onclick="copiarPromptManual()">📋 Copiar mensaje para pegar en Claude</button>
+        <div class="fld" style="margin-top:14px">
+          <label>Pega aquí la respuesta de Claude (el JSON)</label>
+          <textarea id="respuestaManual" placeholder='[&#10;  {"fecha":"2026-07-03","desc":"Mercadona","tipo":"gasto","cat":"Alimentación","importe":23.45,"cuenta":"BBVA"},&#10;  …&#10;]'></textarea>
+        </div>
+        <div style="margin-top:10px;display:flex;gap:8px;align-items:center">
+          <button class="btn primary" onclick="procesarRespuestaManual()">Procesar respuesta</button>
+          <select id="impCuentaManual"></select>
+          <span class="note" id="manualStatus"></span>
+        </div>
       </div>
+
+      <div id="modoProxy" style="display:none">
+        <p class="note" style="margin-bottom:12px">Pega el texto de tu extracto o sube el archivo (PDF, CSV o TXT) de BBVA, Trade Republic, N26… <strong>Requiere tener configurada la sincronización (⚙)</strong> con un proxy de IA con crédito disponible.</p>
+        <div style="display:flex;gap:8px;margin-bottom:10px;flex-wrap:wrap">
+          <button class="btn" onclick="document.getElementById('fileExtracto').click()">Subir PDF / CSV / TXT</button>
+          <input type="file" id="fileExtracto" accept=".pdf,.csv,.txt,.tsv" style="display:none" onchange="leerArchivo(this)">
+          <select id="impCuenta"></select>
+        </div>
+        <textarea id="extractoTexto" placeholder="03/07/2026  MERCADONA COMPRA  -23,45 €&#10;01/07/2026  NOMINA EMPRESA  +2.130,50 €&#10;…"></textarea>
+        <div style="margin-top:12px;display:flex;gap:8px;align-items:center">
+          <button class="btn primary" id="btnAnalizar" onclick="analizarExtracto()">Analizar con IA</button>
+          <span class="note" id="impStatus"></span>
+        </div>
+      </div>
+
       <div id="impReview" style="margin-top:18px"></div>
     </div>
   </section>
@@ -461,6 +483,60 @@ function guardarMov(){
   document.getElementById('aDesc').value=''; document.getElementById('aImporte').value='';
 }
 
+document.getElementById('modoImportSeg').addEventListener('click',e=>{
+  if(e.target.tagName!=='BUTTON') return;
+  const modo = e.target.dataset.m;
+  [...document.getElementById('modoImportSeg').children].forEach(b=> b.className = b===e.target ? 'sel-ing' : '');
+  document.getElementById('modoManual').style.display = modo==='manual' ? '' : 'none';
+  document.getElementById('modoProxy').style.display = modo==='proxy' ? '' : 'none';
+});
+function promptClasificacion(cuentaDef){
+  return `Eres un asistente que estructura extractos bancarios españoles. Analiza el extracto que te adjunto (texto, foto o PDF) y devuelve SOLO un array JSON (sin markdown, sin explicaciones, sin texto antes ni después) donde cada elemento es un movimiento con estos campos:
+- "fecha": formato "YYYY-MM-DD" (asume año 2026 si no aparece)
+- "desc": descripción corta y limpia del movimiento
+- "tipo": "ingreso" (dinero que entra), "gasto" (dinero que sale) o "traspaso" (transferencia entre cuentas propias del usuario: BBVA, Trade Republic, N26, Deutsche Bank, Revolut)
+- "cat": para ingresos una de: ${JSON.stringify(CATS_ING)}. Para gastos una de: ${JSON.stringify(CATS_GAS)}. Para traspasos: "${CAT_TRASPASO}".
+- "importe": número positivo con decimales (usa punto decimal)
+- "cuenta": "${cuentaDef}" salvo que el extracto indique otra de las cuentas del usuario
+
+Reglas de clasificación: supermercados/restaurantes/cafeterías → Alimentación; gasolineras/taxi/Cabify/metro → Transporte; luz/agua/gas → Suministros; móvil/internet → Telecomunicaciones; farmacia/médico → Salud y Farmacia; cine/bolos/conciertos → Ocio; Netflix/Disney/Spotify/HBO → Entretenimiento; ropa/calzado → Ropa y Personal; peluquería/perfumería → Cosmética; librerías → Libros; Games Workshop/miniaturas/pinturas de modelismo → Warhammer; vuelos/hoteles/Airbnb → Viajes; nóminas → Salario Neto; si no encaja claramente → "Otros Gastos" u "Otros Ingresos".
+
+Adjunto mi extracto a continuación (o lo pego justo después de este mensaje).`;
+}
+function copiarPromptManual(){
+  const cuentaDef = document.getElementById('impCuentaManual').value;
+  const texto = promptClasificacion(cuentaDef);
+  navigator.clipboard.writeText(texto).then(()=>{
+    toast('Mensaje copiado — pégalo en una conversación con Claude ✓');
+  }).catch(()=>{
+    document.getElementById('respuestaManual').value = texto;
+    toast('No se pudo copiar automáticamente: te lo he puesto abajo para que lo copies tú');
+  });
+}
+function procesarRespuestaManual(){
+  const texto = document.getElementById('respuestaManual').value.trim();
+  const cuentaDef = document.getElementById('impCuentaManual').value;
+  if(!texto){ toast('Pega primero la respuesta de Claude'); return; }
+  const st = document.getElementById('manualStatus');
+  try{
+    procesarRespuestaIA(texto, cuentaDef);
+    st.textContent = `${propuestos.length} movimientos detectados (${propuestos.filter(m=>m.dup).length} posibles duplicados desmarcados).`;
+  }catch(e){
+    st.textContent = 'No se pudo interpretar como JSON válido: ' + e.message;
+  }
+}
+function procesarRespuestaIA(text, cuentaDef){
+  text = text.replace(/```json|```/g,'').trim();
+  const ini = text.indexOf('['), fin = text.lastIndexOf(']');
+  propuestos = JSON.parse(text.slice(ini, fin+1)).map(m=>({
+    fecha:m.fecha, desc:m.desc||'', tipo:['ingreso','gasto','traspaso'].includes(m.tipo)?m.tipo:'gasto',
+    cat:m.cat, importe:Math.abs(parseFloat(m.importe))||0, cuenta:m.cuenta||cuentaDef, incluir:true
+  })).filter(m=>m.importe>0);
+  propuestos.forEach(m=> m.dup = existeDuplicado(m));
+  propuestos.forEach(m=>{ if(m.dup) m.incluir=false; });
+  renderReview();
+}
+
 /* ── Importar con IA ── */
 let propuestos = [];
 let pdfPendiente = null; // {data: base64, nombre}
@@ -499,38 +575,21 @@ async function analizarExtracto(){
   }
   btn.disabled = true; st.innerHTML = '<span class="spinner"></span>Analizando movimientos…';
   const cuentaDef = document.getElementById('impCuenta').value;
-  const prompt = `Eres un asistente que estructura extractos bancarios españoles. Analiza el extracto adjunto y devuelve SOLO un array JSON (sin markdown, sin explicaciones) donde cada elemento es un movimiento con estos campos:
-- "fecha": formato "YYYY-MM-DD" (asume año 2026 si no aparece)
-- "desc": descripción corta y limpia del movimiento
-- "tipo": "ingreso" (dinero que entra), "gasto" (dinero que sale) o "traspaso" (transferencia entre cuentas propias del usuario: BBVA, Trade Republic, N26, Deutsche Bank, Revolut)
-- "cat": para ingresos una de: ${JSON.stringify(CATS_ING)}. Para gastos una de: ${JSON.stringify(CATS_GAS)}. Para traspasos: "${CAT_TRASPASO}".
-- "importe": número positivo con decimales (usa punto decimal)
-- "cuenta": "${cuentaDef}" salvo que el extracto indique otra de las cuentas del usuario
-
-Reglas de clasificación: supermercados/restaurantes/cafeterías → Alimentación; gasolineras/taxi/Cabify/metro → Transporte; luz/agua/gas → Suministros; móvil/internet → Telecomunicaciones; farmacia/médico → Salud y Farmacia; cine/bolos/conciertos → Ocio; Netflix/Disney/Spotify/HBO → Entretenimiento; ropa/calzado → Ropa y Personal; peluquería/perfumería → Cosmética; librerías → Libros; Games Workshop/miniaturas/pinturas de modelismo → Warhammer; vuelos/hoteles/Airbnb → Viajes; nóminas → Salario Neto; si no encaja claramente → "Otros Gastos" u "Otros Ingresos".`;
-  const content = pdfPendiente
-    ? [{type:'document',source:{type:'base64',media_type:'application/pdf',data:pdfPendiente.data}},{type:'text',text:prompt}]
-    : prompt + '\n\nExtracto:\n' + texto;
+  const prompt = promptClasificacion(cuentaDef);
+  const promptFinal = pdfPendiente ? prompt : (prompt + '\n\nExtracto:\n' + texto);
+  const body = { aiPrompt: promptFinal };
+  if(pdfPendiente) body.aiPdf = pdfPendiente.data;
   try{
     const resp = await fetch(syncUrl,{
       method:'POST', headers:{'Content-Type':'text/plain'},
-      body: JSON.stringify({aiContent: content})
+      body: JSON.stringify(body)
     });
     const data = await resp.json();
     if(data.ok===false){ throw new Error(data.error||'Error del proxy'); }
-    let text = (data.content||[]).filter(b=>b.type==='text').map(b=>b.text).join('\n');
-    text = text.replace(/```json|```/g,'').trim();
-    const ini = text.indexOf('['), fin = text.lastIndexOf(']');
-    propuestos = JSON.parse(text.slice(ini, fin+1)).map(m=>({
-      fecha:m.fecha, desc:m.desc||'', tipo:['ingreso','gasto','traspaso'].includes(m.tipo)?m.tipo:'gasto',
-      cat:m.cat, importe:Math.abs(parseFloat(m.importe))||0, cuenta:m.cuenta||cuentaDef, incluir:true
-    })).filter(m=>m.importe>0);
-    propuestos.forEach(m=> m.dup = existeDuplicado(m));
-    propuestos.forEach(m=>{ if(m.dup) m.incluir=false; });
+    procesarRespuestaIA((data.text||'').trim(), cuentaDef);
     st.textContent = `${propuestos.length} movimientos detectados (${propuestos.filter(m=>m.dup).length} posibles duplicados desmarcados).`;
     pdfPendiente = null;
     document.getElementById('extractoTexto').placeholder = '03/07/2026  MERCADONA COMPRA  -23,45 €\n01/07/2026  NOMINA EMPRESA  +2.130,50 €\n…';
-    renderReview();
   }catch(e){
     st.textContent = 'No se pudo analizar: ' + e.message;
   }finally{ btn.disabled = false; }
@@ -726,7 +785,9 @@ document.getElementById('tab-importar').style.display='none';
 function renderAll(){
   renderPanel(); renderFiltros(); renderMovs(); renderCuentas(); renderCartera();
   const ic = document.getElementById('impCuenta');
-  if(!ic.options.length) S.cuentas.forEach(c=> ic.add(new Option('Cuenta: '+c.nombre, c.nombre)));
+  ic.innerHTML=''; S.cuentas.forEach(c=> ic.add(new Option('Cuenta: '+c.nombre, c.nombre)));
+  const icm = document.getElementById('impCuentaManual');
+  icm.innerHTML=''; S.cuentas.forEach(c=> icm.add(new Option('Cuenta: '+c.nombre, c.nombre)));
 }
 renderForm();
 renderAll();
