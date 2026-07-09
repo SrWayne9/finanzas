@@ -143,8 +143,15 @@ textarea{width:100%;min-height:180px;font-family:'IBM Plex Mono',monospace;font-
       <select id="fCuenta" onchange="renderMovs()"><option value="">Todas las cuentas</option></select>
       <input type="number" step="0.01" id="fImporteMin" placeholder="Importe mín." style="width:110px" oninput="renderMovs()">
       <input type="number" step="0.01" id="fImporteMax" placeholder="Importe máx." style="width:110px" oninput="renderMovs()">
+      <select id="fOrden" onchange="renderMovs()">
+        <option value="fecha_desc">Más reciente primero</option>
+        <option value="fecha_asc">Más antiguo primero</option>
+        <option value="importe_desc">Importe: mayor a menor</option>
+        <option value="importe_asc">Importe: menor a mayor</option>
+      </select>
       <input type="text" id="fTexto" placeholder="Buscar descripción…" oninput="renderMovs()">
     </div>
+    <p class="note" id="movsContador" style="margin-bottom:10px"></p>
     <div class="card scroll-x"><table id="tablaMovs"></table></div>
   </section>
 
@@ -251,7 +258,7 @@ const DATOS_ORIGINALES = {"ingresos": [], "gastos": [], "inversiones": [], "cuen
 
 const MESES = ['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'];
 const CATS_ING = ['Salario Neto','Extras / Dietas','Rentas / Alquiler','Dividendos','Venta de acciones','Intereses Cuentas Remuneradas','Regalos','Otros Ingresos'];
-const CATS_GAS = ['Vivienda (IBI)','Alimentación','Transporte (Gasolina, Bono Transportes)','Suministros (Luz, Agua, Gas)','Telecomunicaciones (Móvil)','Salud y Farmacia','Ocio (Cine, Bolos…)','Entretenimiento (Disney, Netflix…)','Ropa y Personal','Cosmética','Educación','Libros','Warhammer','Viajes','Donaciones','SEGUROS','ALQUILER (GARAJE)','VIDEOJUEGOS','Tarjeta Aqua Máxima','Tarjeta Aqua Mas','Regalos','Otros Gastos'];
+const CATS_GAS = ['Vivienda (IBI)','Alimentación','Transporte (Gasolina, Bono Transportes)','Suministros (Luz, Agua, Gas)','Telecomunicaciones (Móvil)','Salud y Farmacia','Ocio (Cine, Bolos…)','Entretenimiento (Disney, Netflix…)','Ropa y Personal','Cosmética','Educación','Libros','Warhammer','Viajes','Donaciones','Seguros','Alquiler (Garaje)','Videojuegos','Tarjeta Aqua Máxima','Tarjeta Aqua Mas','Regalos','Otros Gastos'];
 const CATS_INV = ['Plan de Inversión','Inversión','Plan de Ahorro (Saveback)'];
 const CAT_TRASPASO = 'Traspaso a Cuenta Bancaria';
 // Cuentas externas: seleccionables como origen/destino en traspasos, pero NUNCA
@@ -337,6 +344,22 @@ const fmt = n => (n||0).toLocaleString('es-ES',{minimumFractionDigits:2,maximumF
 const mesDe = f => f ? parseInt(f.slice(5,7),10)-1 : null;
 const anioDe = f => f ? parseInt(f.slice(0,4),10) : null;
 const esTraspaso = g => g.cat === CAT_TRASPASO;
+const normCat = s => (s||'').trim().toLowerCase();
+const catCoincide = (catGuardada, catLista) => normCat(catGuardada) === normCat(catLista);
+function catCanonicaLabel(cat, lista){
+  const encontrada = lista.find(c=>catCoincide(c,cat));
+  return encontrada || cat || 'Sin categoría';
+}
+function sumaCategorias(arr, lista, filtroFn){
+  // Suma por categoría siendo insensible a mayúsculas/espacios, y detecta lo que no encaje con ninguna categoría conocida
+  const map = {}; lista.forEach(c=> map[normCat(c)] = 0);
+  let sinReconocer = 0;
+  arr.filter(filtroFn).forEach(m=>{
+    const n = normCat(m.cat);
+    if(n in map) map[n]+=m.importe; else sinReconocer+=m.importe;
+  });
+  return {porCategoria:lista.map(c=>({label:c, val:map[normCat(c)]})), sinReconocer};
+}
 
 /* ── Agregados ── */
 function movsUnificados(){
@@ -460,19 +483,21 @@ function renderResumenHistorico(){
   const totIng = S.ingresos.reduce((a,m)=>a+m.importe,0);
   const totGas = S.gastos.filter(m=>!esTraspaso(m)).reduce((a,m)=>a+m.importe,0);
   filas.push(`<tr><th colspan="3" style="color:var(--ing)">📈 Ingresos</th></tr>`);
-  CATS_ING.forEach(c=>{ const v=S.ingresos.filter(m=>m.cat===c).reduce((a,m)=>a+m.importe,0); if(v) filas.push(`<tr><td>${c}</td><td class="r num">${fmt(v)}</td><td class="r num" style="color:var(--muted)">${totIng?(v/totIng*100).toFixed(1):0}%</td></tr>`);});
+  const ing = sumaCategorias(S.ingresos, CATS_ING, ()=>true);
+  ing.porCategoria.forEach(({label,val})=>{ if(val) filas.push(`<tr><td>${label}</td><td class="r num">${fmt(val)}</td><td class="r num" style="color:var(--muted)">${totIng?(val/totIng*100).toFixed(1):0}%</td></tr>`);});
+  if(ing.sinReconocer) filas.push(`<tr><td style="color:var(--bal)">⚠ Sin categoría reconocida</td><td class="r num" style="color:var(--bal)">${fmt(ing.sinReconocer)}</td><td></td></tr>`);
   filas.push(`<tr><td style="font-weight:700">TOTAL INGRESOS</td><td class="r num" style="font-weight:700;color:var(--ing)">${fmt(totIng)}</td><td></td></tr>`);
   filas.push(`<tr><th colspan="3" style="color:var(--gas)">📉 Gastos</th></tr>`);
-  CATS_GAS.forEach(c=>{ const v=S.gastos.filter(m=>m.cat===c).reduce((a,m)=>a+m.importe,0); if(v) filas.push(`<tr><td>${c}</td><td class="r num">${fmt(v)}</td><td class="r num" style="color:var(--muted)">${totGas?(v/totGas*100).toFixed(1):0}%</td></tr>`);});
+  const gas = sumaCategorias(S.gastos, CATS_GAS, m=>!esTraspaso(m));
+  gas.porCategoria.forEach(({label,val})=>{ if(val) filas.push(`<tr><td>${label}</td><td class="r num">${fmt(val)}</td><td class="r num" style="color:var(--muted)">${totGas?(val/totGas*100).toFixed(1):0}%</td></tr>`);});
+  if(gas.sinReconocer) filas.push(`<tr><td style="color:var(--bal)">⚠ Sin categoría reconocida</td><td class="r num" style="color:var(--bal)">${fmt(gas.sinReconocer)}</td><td></td></tr>`);
   filas.push(`<tr><td style="font-weight:700">TOTAL GASTOS</td><td class="r num" style="font-weight:700;color:var(--gas)">${fmt(totGas)}</td><td></td></tr>`);
   const compras = S.inversiones.filter(m=>m.tipoOp==='Compra');
   const totInv = compras.reduce((a,m)=>a+m.importe,0);
   if(totInv){
     filas.push(`<tr><th colspan="3" style="color:var(--inv)">📊 Inversiones</th></tr>`);
-    [...CATS_INV,'Acciones / ETFs'].forEach(c=>{
-      const v = compras.filter(m=>(m.cat||(m.ticker?'Acciones / ETFs':'Inversión'))===c).reduce((a,m)=>a+m.importe,0);
-      if(v) filas.push(`<tr><td>${c}</td><td class="r num">${fmt(v)}</td><td class="r num" style="color:var(--muted)">${(v/totInv*100).toFixed(1)}%</td></tr>`);
-    });
+    const inv = sumaCategorias(compras.map(m=>({...m, cat:m.cat||(m.ticker?'Acciones / ETFs':'Inversión')})), [...CATS_INV,'Acciones / ETFs'], ()=>true);
+    inv.porCategoria.forEach(({label,val})=>{ if(val) filas.push(`<tr><td>${label}</td><td class="r num">${fmt(val)}</td><td class="r num" style="color:var(--muted)">${(val/totInv*100).toFixed(1)}%</td></tr>`);});
     filas.push(`<tr><td style="font-weight:700">TOTAL INVERTIDO</td><td class="r num" style="font-weight:700;color:var(--inv)">${fmt(totInv)}</td><td></td></tr>`);
   }
   document.getElementById('tablaResumenHist').innerHTML = filas.join('');
@@ -480,7 +505,7 @@ function renderResumenHistorico(){
 function renderCatHistorico(){
   const css = v => getComputedStyle(document.documentElement).getPropertyValue(v).trim();
   const agg = {};
-  S.gastos.forEach(m=>{ if(esTraspaso(m)) return; agg[m.cat]=(agg[m.cat]||0)+m.importe; });
+  S.gastos.forEach(m=>{ if(esTraspaso(m)) return; const label=catCanonicaLabel(m.cat, CATS_GAS); agg[label]=(agg[label]||0)+m.importe; });
   const entries = Object.entries(agg).sort((a,b)=>b[1]-a[1]);
   const paleta = ['#f0635a','#f2b94b','#3ecf8e','#5aa9e6','#9b8cff','#e87ab0','#6ee0d5','#c9d16a','#f09a5a','#8ba5c9','#c98bff','#7ad48b','#e0656e','#65b7e0','#d1b06a','#a0a8b8'];
   if(chartCatHist) chartCatHist.destroy();
@@ -529,7 +554,8 @@ function renderCharts(){
     if(anioDe(m.fecha)!==AÑO_ACTUAL) return;
     const i = mesDe(m.fecha);
     if(mesSel!=='ANO' && i!==mesSel) return;
-    agg[m.cat] = (agg[m.cat]||0)+m.importe;
+    const label = catCanonicaLabel(m.cat, CATS_GAS);
+    agg[label] = (agg[label]||0)+m.importe;
   });
   const entries = Object.entries(agg).sort((a,b)=>b[1]-a[1]);
   const paleta = ['#f0635a','#f2b94b','#3ecf8e','#5aa9e6','#9b8cff','#e87ab0','#6ee0d5','#c9d16a','#f09a5a','#8ba5c9','#c98bff','#7ad48b','#e0656e','#65b7e0','#d1b06a','#a0a8b8'];
@@ -544,14 +570,18 @@ function renderCharts(){
 function renderResumen(){
   const filtro = m => anioDe(m.fecha)===AÑO_ACTUAL && (mesSel==='ANO' || mesDe(m.fecha)===mesSel);
   const filas = [];
-  const sum = (arr,cat,pred) => arr.filter(m=>pred(m)&&filtro(m)).reduce((a,m)=>a+m.importe,0);
   const totIng = S.ingresos.filter(filtro).reduce((a,m)=>a+m.importe,0);
   const totGas = S.gastos.filter(m=>!esTraspaso(m)&&filtro(m)).reduce((a,m)=>a+m.importe,0);
   filas.push(`<tr><th colspan="3" style="color:var(--ing)">📈 Ingresos</th></tr>`);
-  CATS_ING.forEach(c=>{ const v=sum(S.ingresos,c,m=>m.cat===c); if(v) filas.push(`<tr><td>${c}</td><td class="r num">${fmt(v)}</td><td class="r num" style="color:var(--muted)">${totIng?(v/totIng*100).toFixed(1):0}%</td></tr>`);});
+  const ing = sumaCategorias(S.ingresos, CATS_ING, filtro);
+  ing.porCategoria.forEach(({label,val})=>{ if(val) filas.push(`<tr><td>${label}</td><td class="r num">${fmt(val)}</td><td class="r num" style="color:var(--muted)">${totIng?(val/totIng*100).toFixed(1):0}%</td></tr>`);});
+  if(ing.sinReconocer) filas.push(`<tr><td style="color:var(--bal)">⚠ Sin categoría reconocida</td><td class="r num" style="color:var(--bal)">${fmt(ing.sinReconocer)}</td><td></td></tr>`);
   filas.push(`<tr><td style="font-weight:700">TOTAL INGRESOS</td><td class="r num" style="font-weight:700;color:var(--ing)">${fmt(totIng)}</td><td></td></tr>`);
   filas.push(`<tr><th colspan="3" style="color:var(--gas)">📉 Gastos</th></tr>`);
-  CATS_GAS.forEach(c=>{ const v=sum(S.gastos,c,m=>m.cat===c); if(v) filas.push(`<tr><td>${c}</td><td class="r num">${fmt(v)}</td><td class="r num" style="color:var(--muted)">${totGas?(v/totGas*100).toFixed(1):0}%</td></tr>`);});
+  const filtroGas = m => filtro(m) && !esTraspaso(m);
+  const gas = sumaCategorias(S.gastos, CATS_GAS, filtroGas);
+  gas.porCategoria.forEach(({label,val})=>{ if(val) filas.push(`<tr><td>${label}</td><td class="r num">${fmt(val)}</td><td class="r num" style="color:var(--muted)">${totGas?(val/totGas*100).toFixed(1):0}%</td></tr>`);});
+  if(gas.sinReconocer) filas.push(`<tr><td style="color:var(--bal)">⚠ Sin categoría reconocida</td><td class="r num" style="color:var(--bal)">${fmt(gas.sinReconocer)}</td><td></td></tr>`);
   filas.push(`<tr><td style="font-weight:700">TOTAL GASTOS</td><td class="r num" style="font-weight:700;color:var(--gas)">${fmt(totGas)}</td><td></td></tr>`);
   const tras = S.gastos.filter(m=>esTraspaso(m)&&filtro(m)).reduce((a,m)=>a+m.importe,0);
   if(tras) filas.push(`<tr><td style="color:var(--tra)">Traspasos entre cuentas (no computan)</td><td class="r num" style="color:var(--tra)">${fmt(tras)}</td><td></td></tr>`);
@@ -559,10 +589,8 @@ function renderResumen(){
   const totInv = compras.reduce((a,m)=>a+m.importe,0);
   if(totInv){
     filas.push(`<tr><th colspan="3" style="color:var(--inv)">📊 Inversiones (compras, no computan como gasto)</th></tr>`);
-    [...CATS_INV,'Acciones / ETFs'].forEach(c=>{
-      const v = compras.filter(m=>(m.cat||(m.ticker?'Acciones / ETFs':'Inversión'))===c).reduce((a,m)=>a+m.importe,0);
-      if(v) filas.push(`<tr><td>${c}</td><td class="r num">${fmt(v)}</td><td class="r num" style="color:var(--muted)">${(v/totInv*100).toFixed(1)}%</td></tr>`);
-    });
+    const inv = sumaCategorias(compras.map(m=>({...m, cat:m.cat||(m.ticker?'Acciones / ETFs':'Inversión')})), [...CATS_INV,'Acciones / ETFs'], ()=>true);
+    inv.porCategoria.forEach(({label,val})=>{ if(val) filas.push(`<tr><td>${label}</td><td class="r num">${fmt(val)}</td><td class="r num" style="color:var(--muted)">${(val/totInv*100).toFixed(1)}%</td></tr>`);});
     filas.push(`<tr><td style="font-weight:700">TOTAL INVERTIDO</td><td class="r num" style="font-weight:700;color:var(--inv)">${fmt(totInv)}</td><td></td></tr>`);
   }
   document.getElementById('tablaResumen').innerHTML = filas.join('');
@@ -595,14 +623,27 @@ function renderMovs(){
   const cuentaF = document.getElementById('fCuenta').value;
   const impMin = parseFloat(document.getElementById('fImporteMin').value);
   const impMax = parseFloat(document.getElementById('fImporteMax').value);
-  let movs = movsUnificados();
+  const todos = movsUnificados();
+  let movs = todos;
   if(tipo) movs = movs.filter(m=>m.tipo===tipo);
   if(mes!=='') movs = movs.filter(m=>mesDe(m.fecha)===parseInt(mes));
-  if(cat) movs = movs.filter(m=>m.cat===cat);
+  if(cat) movs = movs.filter(m=>catCoincide(m.cat,cat));
   if(txt) movs = movs.filter(m=>(m.desc||'').toLowerCase().includes(txt));
   if(cuentaF) movs = movs.filter(m=> m.cuenta===cuentaF || m.origen===cuentaF || m.destino===cuentaF);
   if(!isNaN(impMin)) movs = movs.filter(m=> m.importe>=impMin);
   if(!isNaN(impMax)) movs = movs.filter(m=> m.importe<=impMax);
+  const orden = document.getElementById('fOrden').value;
+  const movsOrdenados = [...movs];
+  if(orden==='fecha_asc') movsOrdenados.sort((a,b)=> (a.fecha||'').localeCompare(b.fecha||''));
+  else if(orden==='importe_desc') movsOrdenados.sort((a,b)=> b.importe-a.importe);
+  else if(orden==='importe_asc') movsOrdenados.sort((a,b)=> a.importe-b.importe);
+  // 'fecha_desc' es el orden por defecto que ya trae movsUnificados()
+  movs = movsOrdenados;
+  const hayFiltro = tipo||mes!==''||cat||txt||cuentaF||!isNaN(impMin)||!isNaN(impMax);
+  const sumaImporte = movs.reduce((a,m)=>a+m.importe,0);
+  document.getElementById('movsContador').textContent = hayFiltro
+    ? `${movs.length} de ${todos.length} movimientos · suma: ${fmt(sumaImporte)}`
+    : `${todos.length} movimientos`;
   const rows = movs.map(m=>{
     const cu = m.tipo==='traspaso' ? `${m.origen||'❓'} → ${m.destino||'❓'}` : (m.cuenta||m.origen||'');
     const cls = m.tipo==='ingreso'?'ing':m.tipo==='gasto'?'gas':m.tipo==='inversion'?'inv':'tra';
@@ -792,7 +833,7 @@ function promptClasificacion(cuentaDef){
 - "destino": SOLO si "tipo" es "traspaso" — analiza con cuidado la descripción de cada traspaso (beneficiario, concepto, referencia, IBAN parcial, nombre del banco mencionado) para deducir a qué cuenta del usuario fue: BBVA, Trade Republic, N26, Deutsche Bank, Revolut, "Común Santander" o "BBVA Metas". Si el concepto es genérico ("Transferencia", "Traspaso", un nombre de persona, un IBAN que no reconoces) y NO tienes una pista razonable de cuál de esas cuentas es, deja "destino": null — NO ADIVINES ni pongas una cuenta al azar, es preferible dejarlo en null para que el usuario lo revise a mano. Aplica el mismo criterio de honestidad a "cuenta" si por algún motivo el origen tampoco está claro: mejor null que una suposición.
 - "pago": SOLO si "tipo" es "gasto" — el método de pago si se puede deducir: "Débito", "Crédito", "Efectivo", "Bizum" o "PayPal". Si la descripción contiene la palabra "bizum" (en cualquier variación de mayúsculas), usa siempre "pago": "Bizum".
 
-Reglas de clasificación generales: supermercados/restaurantes/cafeterías → Alimentación; gasolineras/taxi/Cabify/metro → Transporte; luz/agua/gas → Suministros; móvil/internet → Telecomunicaciones; farmacia/médico → Salud y Farmacia; cine/bolos/conciertos → Ocio; Netflix/Disney/Spotify/HBO → Entretenimiento; ropa/calzado → Ropa y Personal; peluquería/perfumería → Cosmética; librerías → Libros; Games Workshop/miniaturas/pinturas de modelismo → Warhammer; vuelos/hoteles/Airbnb → Viajes; nóminas → Salario Neto; venta de acciones/ETFs con ingreso de efectivo → "Venta de acciones"; movimientos de Trade Republic hacia "Sparplan"/plan de inversión/Saveback/compra de un activo → tipo "inversion", NUNCA los clasifiques como "Otros Gastos"; seguros (hogar, vida, auto...) → "SEGUROS"; alquiler de garaje/plaza de aparcamiento → "ALQUILER (GARAJE)"; Steam/PlayStation Store/Xbox/Nintendo/videojuegos → "VIDEOJUEGOS"; una transferencia con nombre de una persona o empresa que NO sea una de las cuentas propias del usuario NO es un "traspaso" — clasifícala como "gasto" en la categoría que mejor encaje (o "Otros Gastos"); si no encaja claramente en ningún caso anterior → "Otros Gastos" u "Otros Ingresos".
+Reglas de clasificación generales: supermercados/restaurantes/cafeterías → Alimentación; gasolineras/taxi/Cabify/metro → Transporte; luz/agua/gas → Suministros; móvil/internet → Telecomunicaciones; farmacia/médico → Salud y Farmacia; cine/bolos/conciertos → Ocio; Netflix/Disney/Spotify/HBO → Entretenimiento; ropa/calzado → Ropa y Personal; peluquería/perfumería → Cosmética; librerías → Libros; Games Workshop/miniaturas/pinturas de modelismo → Warhammer; vuelos/hoteles/Airbnb → Viajes; nóminas → Salario Neto; venta de acciones/ETFs con ingreso de efectivo → "Venta de acciones"; movimientos de Trade Republic hacia "Sparplan"/plan de inversión/Saveback/compra de un activo → tipo "inversion", NUNCA los clasifiques como "Otros Gastos"; seguros (hogar, vida, auto...) → "Seguros"; alquiler de garaje/plaza de aparcamiento → "Alquiler (Garaje)"; Steam/PlayStation Store/Xbox/Nintendo/videojuegos → "Videojuegos"; una transferencia con nombre de una persona o empresa que NO sea una de las cuentas propias del usuario NO es un "traspaso" — clasifícala como "gasto" en la categoría que mejor encaje (o "Otros Gastos"); si no encaja claramente en ningún caso anterior → "Otros Gastos" u "Otros Ingresos".
 
 Reglas EXACTAS y literales (aplican siempre que el concepto coincida, aunque no encajen en las reglas generales anteriores):
 - Concepto "Traspaso programa tu cuenta - redondeo tarjeta": es tipo "traspaso". Si es un ingreso (dinero que entra), "cuenta": "BBVA Metas" y "destino": "BBVA". Si es un gasto/salida, "cuenta": "BBVA" y "destino": "BBVA Metas".
@@ -944,16 +985,16 @@ function confirmarImport(){
   const cuentaDef = document.getElementById('impCuenta').value;
   propuestos.filter(m=>m.incluir).forEach(m=>{
     if(m.tipo==='ingreso'){
-      const cat = CATS_ING.includes(m.cat)?m.cat:CATS_ING[CATS_ING.length-1];
-      S.ingresos.push({fecha:m.fecha,desc:m.desc,cat,importe:m.importe,cuenta:m.cuenta||cuentaDef});
+      const cat = catCanonicaLabel(m.cat, CATS_ING);
+      S.ingresos.push({fecha:m.fecha,desc:m.desc,cat:CATS_ING.includes(cat)?cat:CATS_ING[CATS_ING.length-1],importe:m.importe,cuenta:m.cuenta||cuentaDef});
     } else if(m.tipo==='traspaso'){
       S.gastos.push({fecha:m.fecha,desc:m.desc,cat:CAT_TRASPASO,importe:m.importe,pago:'Débito',origen:m.cuenta||null,destino:m.destino||null,pendiente:!m.cuenta||!m.destino});
     } else if(m.tipo==='inversion'){
-      const cat = CATS_INV.includes(m.cat)?m.cat:CATS_INV[1];
-      S.inversiones.push({fecha:m.fecha,desc:m.desc,importe:m.importe,broker:m.cuenta||cuentaDef,comision:0,numAcciones:null,tipoOp:'Compra',ticker:null,precio:null,cat,pendiente:true});
+      const cat = catCanonicaLabel(m.cat, CATS_INV);
+      S.inversiones.push({fecha:m.fecha,desc:m.desc,importe:m.importe,broker:m.cuenta||cuentaDef,comision:0,numAcciones:null,tipoOp:'Compra',ticker:null,precio:null,cat:CATS_INV.includes(cat)?cat:CATS_INV[1],pendiente:true});
     } else {
-      const cat = CATS_GAS.includes(m.cat)?m.cat:CATS_GAS[CATS_GAS.length-1];
-      S.gastos.push({fecha:m.fecha,desc:m.desc,cat,importe:m.importe,pago:m.pago||'Débito',origen:m.cuenta||cuentaDef,destino:null});
+      const cat = catCanonicaLabel(m.cat, CATS_GAS);
+      S.gastos.push({fecha:m.fecha,desc:m.desc,cat:CATS_GAS.includes(cat)?cat:CATS_GAS[CATS_GAS.length-1],importe:m.importe,pago:m.pago||'Débito',origen:m.cuenta||cuentaDef,destino:null});
     }
     n++;
   });
