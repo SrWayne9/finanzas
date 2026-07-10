@@ -137,12 +137,10 @@ textarea{width:100%;min-height:180px;font-family:'IBM Plex Mono',monospace;font-
 
   <section id="tab-movs" style="display:none">
     <div class="filters">
-      <select id="fTipo" onchange="renderMovs()"><option value="">Todos los tipos</option><option value="ingreso">Ingresos</option><option value="gasto">Gastos</option><option value="traspaso">Traspasos</option><option value="inversion">Inversiones</option></select>
+      <select id="fTipo" onchange="actualizarFCatPorTipo();renderMovs()"><option value="">Todos los tipos</option><option value="ingreso">Ingresos</option><option value="gasto">Gastos</option><option value="traspaso">Traspasos</option><option value="inversion">Inversiones</option></select>
       <select id="fMes" onchange="renderMovs()"><option value="">Todo el año</option></select>
       <select id="fCat" onchange="renderMovs()"><option value="">Todas las categorías</option></select>
       <select id="fCuenta" onchange="renderMovs()"><option value="">Todas las cuentas</option></select>
-      <input type="number" step="0.01" id="fImporteMin" placeholder="Importe mín." style="width:110px" oninput="renderMovs()">
-      <input type="number" step="0.01" id="fImporteMax" placeholder="Importe máx." style="width:110px" oninput="renderMovs()">
       <select id="fOrden" onchange="renderMovs()">
         <option value="fecha_desc">Más reciente primero</option>
         <option value="fecha_asc">Más antiguo primero</option>
@@ -150,6 +148,10 @@ textarea{width:100%;min-height:180px;font-family:'IBM Plex Mono',monospace;font-
         <option value="importe_asc">Importe: menor a mayor</option>
       </select>
       <input type="text" id="fTexto" placeholder="Buscar descripción…" oninput="renderMovs()">
+    </div>
+    <div class="filters">
+      <input type="number" step="0.01" id="fImporteMin" placeholder="Importe mínimo" style="width:150px" oninput="renderMovs()">
+      <input type="number" step="0.01" id="fImporteMax" placeholder="Importe máximo" style="width:150px" oninput="renderMovs()">
     </div>
     <p class="note" id="movsContador" style="margin-bottom:10px"></p>
     <div class="card scroll-x"><table id="tablaMovs"></table></div>
@@ -211,7 +213,10 @@ textarea{width:100%;min-height:180px;font-family:'IBM Plex Mono',monospace;font-
 
   <section id="tab-cuentas" style="display:none">
     <div class="card scroll-x" style="margin-bottom:14px">
-      <h3>Cuentas bancarias</h3>
+      <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;margin-bottom:12px">
+        <h3 style="margin:0">Cuentas bancarias</h3>
+        <select id="fCuentasAnio" onchange="renderCuentas()"><option value="">Global (todos los años)</option></select>
+      </div>
       <table id="tablaCuentas"></table>
       <div class="form-grid" style="margin-top:14px;margin-bottom:0">
         <div class="fld"><label>Nombre de la cuenta</label><input type="text" id="nvCuentaNombre" placeholder="p. ej. BBVA"></div>
@@ -254,7 +259,7 @@ textarea{width:100%;min-height:180px;font-family:'IBM Plex Mono',monospace;font-
 <div class="toast" id="toast"></div>
 
 <script>
-const DATOS_ORIGINALES = {"ingresos": [], "gastos": [], "inversiones": [], "cuentas": [], "cartera": []};
+const DATOS_ORIGINALES = {"ingresos": [], "gastos": [], "inversiones": [], "cuentas": [], "cartera": [], "nombresActivos": {}};
 
 const MESES = ['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'];
 const CATS_ING = ['Salario Neto','Extras / Dietas','Rentas / Alquiler','Dividendos','Venta de acciones','Intereses Cuentas Remuneradas','Regalos','Devoluciones','Otros Ingresos'];
@@ -264,14 +269,30 @@ const CAT_TRASPASO = 'Traspaso a Cuenta Bancaria';
 // Cuentas externas: seleccionables como origen/destino en traspasos, pero NUNCA
 // aparecen en la tabla de "Cuentas bancarias" ni suman saldo propio.
 const CUENTAS_EXTERNAS = ['Común Santander', 'BBVA Metas'];
+// Nombres conocidos por defecto para tickers habituales (ETFs indexados y acciones frecuentes).
+// El usuario puede sobrescribir cualquiera de estos, o añadir los suyos, desde la Cartera de Valores.
+const NOMBRES_ACTIVOS_DEFECTO = {
+  'IWDA':'iShares Core MSCI World UCITS ETF','SWDA':'iShares Core MSCI World UCITS ETF',
+  'VWCE':'Vanguard FTSE All-World UCITS ETF','VWRL':'Vanguard FTSE All-World UCITS ETF',
+  'VUAA':'Vanguard S&P 500 UCITS ETF','VUSA':'Vanguard S&P 500 UCITS ETF',
+  'CSPX':'iShares Core S&P 500 UCITS ETF','EUNL':'iShares Core MSCI World UCITS ETF',
+  'IUSQ':'iShares Core MSCI World UCITS ETF','SXR8':'iShares Core S&P 500 UCITS ETF',
+  'EQAC':'Amundi Core MSCI World UCITS ETF','ISAC':'iShares MSCI ACWI UCITS ETF',
+  'ZPRV':'SPDR MSCI World Small Cap UCITS ETF','VFEM':'Vanguard FTSE Emerging Markets UCITS ETF',
+  'IEMA':'iShares Core MSCI EM IMI UCITS ETF','EIMI':'iShares Core MSCI EM IMI UCITS ETF',
+  'IBDL':'Iberdrola, S.A.','A3M':'Atresmedia Corporación','DOL':'Deoleo, S.A.',
+  'NKE':'Nike, Inc.','AAPL':'Apple Inc.','MSFT':'Microsoft Corporation','GOOGL':'Alphabet Inc.',
+  'AMZN':'Amazon.com, Inc.','TSLA':'Tesla, Inc.','SAN':'Banco Santander, S.A.','BBVA':'Banco Bilbao Vizcaya Argentaria, S.A.'
+};
 const LS_KEY = 'finanzas2026_v1';
 const AÑO_ACTUAL = new Date().getFullYear();
 
 let S; // estado
 function cargar(){
-  try{ const raw = localStorage.getItem(LS_KEY); if(raw){ S = JSON.parse(raw); return; } }catch(e){}
-  S = JSON.parse(JSON.stringify(DATOS_ORIGINALES));
+  try{ const raw = localStorage.getItem(LS_KEY); if(raw){ S = JSON.parse(raw); asegurarCampos(); return; } }catch(e){}
+  S = JSON.parse(JSON.stringify(DATOS_ORIGINALES)); asegurarCampos();
 }
+function asegurarCampos(){ if(!S.nombresActivos) S.nombresActivos = {}; }
 function persistir(soloLocal){ try{ localStorage.setItem(LS_KEY, JSON.stringify(S)); }catch(e){} if(!soloLocal && typeof programarGuardadoNube==='function') programarGuardadoNube(); }
 cargar();
 
@@ -384,15 +405,22 @@ function totalesMes(anio){
   t.forEach(x=> x.bal = x.ing - x.gas - x.inv - x.com);
   return t;
 }
-function saldosCuentas(){
-  const map = {}; S.cuentas.forEach(c=> map[c.nombre]={ini:c.saldoInicial, ent:0, sal:0, traIn:0, traOut:0, inv:0});
-  const get = n => { if(!n) return null; if(!map[n]) map[n]={ini:0,ent:0,sal:0,traIn:0,traOut:0,inv:0}; return map[n]; };
-  S.ingresos.forEach(m=>{const c=get(m.cuenta); if(c) c.ent+=m.importe;});
+function saldosCuentas(anio){
+  const map = {}; S.cuentas.forEach(c=> map[c.nombre]={ini:c.saldoInicial, antes:0, ent:0, sal:0, traIn:0, traOut:0, inv:0});
+  const get = n => { if(!n) return null; if(!map[n]) map[n]={ini:0,antes:0,ent:0,sal:0,traIn:0,traOut:0,inv:0}; return map[n]; };
+  const enPeriodo = f => anio==null || anioDe(f)===anio;
+  const antesDePeriodo = f => anio!=null && anioDe(f)!=null && anioDe(f)<anio;
+  S.ingresos.forEach(m=>{const c=get(m.cuenta); if(!c) return; if(enPeriodo(m.fecha)) c.ent+=m.importe; else if(antesDePeriodo(m.fecha)) c.antes+=m.importe;});
   S.gastos.forEach(m=>{
-    if(esTraspaso(m)){ const o=get(m.origen), d=get(m.destino); if(o)o.traOut+=m.importe; if(d)d.traIn+=m.importe; }
-    else { const o=get(m.origen); if(o) o.sal+=m.importe; }
+    if(esTraspaso(m)){ const o=get(m.origen), d=get(m.destino);
+      if(enPeriodo(m.fecha)){ if(o)o.traOut+=m.importe; if(d)d.traIn+=m.importe; }
+      else if(antesDePeriodo(m.fecha)){ if(o)o.antes-=m.importe; if(d)d.antes+=m.importe; }
+    } else { const o=get(m.origen); if(!o) return; if(enPeriodo(m.fecha)) o.sal+=m.importe; else if(antesDePeriodo(m.fecha)) o.antes-=m.importe; }
   });
-  S.inversiones.forEach(m=>{const c=get(m.broker); if(!c)return; if(m.tipoOp==='Compra') c.inv+=(m.importe||0); else if(m.tipoOp==='Venta') c.inv-=(m.importe||0); c.inv+=(m.comision||0);});
+  S.inversiones.forEach(m=>{const c=get(m.broker); if(!c)return;
+    if(enPeriodo(m.fecha)){ if(m.tipoOp==='Compra') c.inv+=(m.importe||0); else if(m.tipoOp==='Venta') c.inv-=(m.importe||0); c.inv+=(m.comision||0); }
+    else if(antesDePeriodo(m.fecha)){ if(m.tipoOp==='Compra') c.antes-=(m.importe||0); else if(m.tipoOp==='Venta') c.antes+=(m.importe||0); c.antes-=(m.comision||0); }
+  });
   return map;
 }
 function posicionesCartera(){
@@ -408,7 +436,8 @@ function posicionesCartera(){
   });
   return Object.values(map).map(p=>{
     const neta = p.accionesBase + p.compradas - p.vendidas;
-    return {...p, neta, valor: neta * (p.ultimoPrecio||0), invTotal: p.invBase + p.invExtra};
+    const nombre = S.nombresActivos[p.ticker] || NOMBRES_ACTIVOS_DEFECTO[p.ticker] || p.ticker;
+    return {...p, neta, nombre, valor: neta * (p.ultimoPrecio||0), invTotal: p.invBase + p.invExtra};
   }).filter(p=> p.neta > 0.0001 || p.invTotal>0).sort((a,b)=> b.valor-a.valor);
 }
 
@@ -602,11 +631,20 @@ function renderPanel(){
 }
 
 /* ── Movimientos ── */
+function actualizarFCatPorTipo(){
+  const fTipo = document.getElementById('fTipo').value;
+  const fCat = document.getElementById('fCat');
+  const valPrevio = fCat.value;
+  const listas = { ingreso:CATS_ING, gasto:CATS_GAS, traspaso:[CAT_TRASPASO], inversion:[...CATS_INV,'Acciones / ETFs'] };
+  const opciones = fTipo ? listas[fTipo] : [...CATS_ING,...CATS_GAS,CAT_TRASPASO,...CATS_INV,'Acciones / ETFs'];
+  fCat.innerHTML = '<option value="">Todas las categorías</option>';
+  opciones.forEach(c=> fCat.add(new Option(c,c)));
+  fCat.value = opciones.some(c=>catCoincide(c,valPrevio)) ? valPrevio : '';
+}
 function renderFiltros(){
   const fMes = document.getElementById('fMes');
   if(fMes.options.length===1) MESES.forEach((m,i)=> fMes.add(new Option(m,i)));
-  const fCat = document.getElementById('fCat');
-  if(fCat.options.length===1) [...CATS_ING,...CATS_GAS,CAT_TRASPASO,...CATS_INV,'Acciones / ETFs'].forEach(c=> fCat.add(new Option(c,c)));
+  actualizarFCatPorTipo();
   const fPendMes = document.getElementById('fPendMes');
   if(fPendMes.options.length===1) MESES.forEach((m,i)=> fPendMes.add(new Option(m,i)));
   const fCuenta = document.getElementById('fCuenta');
@@ -614,6 +652,11 @@ function renderFiltros(){
   fCuenta.innerHTML = '<option value="">Todas las cuentas</option>';
   [...S.cuentas.map(c=>c.nombre), ...CUENTAS_EXTERNAS].forEach(c=> fCuenta.add(new Option(c,c)));
   fCuenta.value = valPrevio;
+  const fCuentasAnio = document.getElementById('fCuentasAnio');
+  const anioPrevio = fCuentasAnio.value;
+  fCuentasAnio.innerHTML = '<option value="">Global (todos los años)</option>';
+  añosDisponibles().forEach(a=> fCuentasAnio.add(new Option(a, a)));
+  fCuentasAnio.value = anioPrevio;
 }
 function renderMovs(){
   const tipo = document.getElementById('fTipo').value;
@@ -828,6 +871,7 @@ function promptClasificacion(cuentaDef){
 - "desc": descripción corta y limpia del movimiento
 - "tipo": "ingreso" (dinero que entra), "gasto" (dinero que sale), "traspaso" (transferencia entre cuentas del usuario: BBVA, Trade Republic, N26, Deutsche Bank, Revolut, "Común Santander" o "BBVA Metas") o "inversion" (dinero que sale hacia un plan de inversión, plan de ahorro automático o compra/venta de un activo, normalmente en Trade Republic)
 - "cat": para ingresos una de: ${JSON.stringify(CATS_ING)}. Para gastos una de: ${JSON.stringify(CATS_GAS)}. Para traspasos: "${CAT_TRASPASO}". Para inversiones una de: ${JSON.stringify(CATS_INV)} (usa "Plan de Inversión" para aportaciones periódicas/Sparplan, "Plan de Ahorro (Saveback)" para el cashback automático invertido de compras con tarjeta, e "Inversión" para compras puntuales sin más detalle).
+- "comision": SOLO si "tipo" es "inversion" — la comisión o gasto de gestión en euros asociado a esa operación, si el extracto la menciona por separado (si no se menciona ninguna comisión, usa 0).
 - "importe": número positivo con decimales (usa punto decimal)
 - "cuenta": la cuenta DUEÑA de este extracto (normalmente "${cuentaDef}", salvo que el propio extracto indique claramente que pertenece a otra cuenta del usuario). Para ingresos y gastos, casi siempre es esta misma cuenta en todas las filas, ya que un extracto normalmente pertenece a una única cuenta.
 - "destino": SOLO si "tipo" es "traspaso" — analiza con cuidado la descripción de cada traspaso (beneficiario, concepto, referencia, IBAN parcial, nombre del banco mencionado) para deducir a qué cuenta del usuario fue: BBVA, Trade Republic, N26, Deutsche Bank, Revolut, "Común Santander" o "BBVA Metas". IMPORTANTE: si el concepto sigue el patrón "Traspaso a X" / "Transferencia a X" (donde X es un nombre), el propio concepto TE ESTÁ DICIENDO el destino explícitamente — compara X contra la lista de cuentas anterior (aceptando variantes razonables: "TR" o "Trade Rep." = "Trade Republic", "Santander" o "Común" = "Común Santander", "Metas" = "BBVA Metas", etc.) y usa esa cuenta como "destino". Solo si X no coincide con ninguna cuenta conocida (por ejemplo, es el nombre de una persona o empresa) dejas "destino": null. Para el resto de casos sin ese patrón explícito, si el concepto es genérico ("Transferencia", "Traspaso" a secas, un IBAN que no reconoces) y NO tienes una pista razonable de cuál de esas cuentas es, deja "destino": null — NO ADIVINES ni pongas una cuenta al azar (y en particular, nunca pongas "BBVA" por defecto si no hay ninguna pista de que sea esa), es preferible dejarlo en null para que el usuario lo revise a mano. Aplica el mismo criterio de honestidad a "cuenta" si por algún motivo el origen tampoco está claro: mejor null que una suposición.
@@ -881,6 +925,7 @@ function procesarRespuestaIA(text, cuentaDef){
     cuenta: (m.tipo==='traspaso') ? (cuentasValidas.has(m.cuenta)?m.cuenta:null) : (m.cuenta||cuentaDef),
     destino: (m.tipo==='traspaso') ? (cuentasValidas.has(m.destino)?m.destino:null) : null,
     pago: PAGOS_VALIDOS.has(m.pago) ? m.pago : 'Débito',
+    comision: parseFloat(m.comision)||0,
     incluir:true
   })).filter(m=>m.importe>0);
   propuestos.forEach(m=> m.pendiente = m.tipo==='traspaso' && (!m.cuenta || !m.destino));
@@ -992,7 +1037,7 @@ function confirmarImport(){
       S.gastos.push({fecha:m.fecha,desc:m.desc,cat:CAT_TRASPASO,importe:m.importe,pago:'Débito',origen:m.cuenta||null,destino:m.destino||null,pendiente:!m.cuenta||!m.destino});
     } else if(m.tipo==='inversion'){
       const cat = catCanonicaLabel(m.cat, CATS_INV);
-      S.inversiones.push({fecha:m.fecha,desc:m.desc,importe:m.importe,broker:m.cuenta||cuentaDef,comision:0,numAcciones:null,tipoOp:'Compra',ticker:null,precio:null,cat:CATS_INV.includes(cat)?cat:CATS_INV[1],pendiente:true});
+      S.inversiones.push({fecha:m.fecha,desc:m.desc,importe:m.importe,broker:m.cuenta||cuentaDef,comision:m.comision||0,numAcciones:null,tipoOp:'Compra',ticker:null,precio:null,cat:CATS_INV.includes(cat)?cat:CATS_INV[1],pendiente:true});
     } else {
       const cat = catCanonicaLabel(m.cat, CATS_GAS);
       S.gastos.push({fecha:m.fecha,desc:m.desc,cat:CATS_GAS.includes(cat)?cat:CATS_GAS[CATS_GAS.length-1],importe:m.importe,pago:m.pago||'Débito',origen:m.cuenta||cuentaDef,destino:null});
@@ -1028,14 +1073,20 @@ function editarSaldoInicial(nombre, input){
   persistir(); renderAll(); toast('Saldo inicial actualizado ✓');
 }
 function renderCuentas(){
-  const map = saldosCuentas();
+  const sel = document.getElementById('fCuentasAnio');
+  const anio = sel.value ? parseInt(sel.value) : null;
+  const map = saldosCuentas(anio);
   let totI=0,totF=0;
   const rows = S.cuentas.map(c=>{
     const s = map[c.nombre];
-    const fin = s.ini + s.ent + s.traIn - s.sal - s.traOut - s.inv;
-    totI+=s.ini; totF+=fin;
+    const inicioPeriodo = anio==null ? s.ini : (s.ini + s.antes);
+    const fin = inicioPeriodo + s.ent + s.traIn - s.sal - s.traOut - s.inv;
+    totI+=inicioPeriodo; totF+=fin;
+    const celdaInicio = anio==null
+      ? `<input type="number" step="0.01" value="${c.saldoInicial}" style="width:110px;text-align:right" onchange="editarSaldoInicial('${c.nombre}',this)">`
+      : `<span class="num">${fmt(inicioPeriodo)}</span>`;
     return `<tr><td style="font-weight:600">${c.nombre}</td>
-      <td class="r"><input type="number" step="0.01" value="${c.saldoInicial}" style="width:110px;text-align:right" onchange="editarSaldoInicial('${c.nombre}',this)"></td>
+      <td class="r">${celdaInicio}</td>
       <td class="r num" style="color:var(--ing)">${fmt(s.ent)}</td>
       <td class="r num" style="color:var(--tra)">${fmt(s.traIn)}</td>
       <td class="r num" style="color:var(--gas)">${fmt(s.sal + s.inv)}</td>
@@ -1044,10 +1095,12 @@ function renderCuentas(){
       <td class="r"><button class="del-btn" onclick="borrarCuenta('${c.nombre}')" title="Eliminar cuenta">✕</button></td></tr>`;
   }).join('');
   const vacio = !S.cuentas.length ? `<tr><td colspan="8" class="note" style="text-align:center;padding:20px">Aún no has añadido ninguna cuenta. Usa el formulario de abajo.</td></tr>` : '';
+  const etiquetaInicio = anio==null ? 'Saldo inicial' : `Saldo a inicios de ${anio}`;
+  const etiquetaFinal = anio==null ? 'Saldo actual' : `Saldo a finales de ${anio}`;
   document.getElementById('tablaCuentas').innerHTML =
-    `<tr><th>Cuenta</th><th class="r">Saldo inicial</th><th class="r">Entradas</th><th class="r">Traspasos +</th><th class="r">Salidas</th><th class="r">Traspasos −</th><th class="r">Saldo actual</th><th></th></tr>`
+    `<tr><th>Cuenta</th><th class="r">${etiquetaInicio}</th><th class="r">Entradas</th><th class="r">Traspasos +</th><th class="r">Salidas</th><th class="r">Traspasos −</th><th class="r">${etiquetaFinal}</th><th></th></tr>`
     + rows + vacio + (S.cuentas.length ? `<tr><td style="font-weight:700">TOTAL</td><td class="r num" style="font-weight:700">${fmt(totI)}</td><td colspan="4"></td><td class="r num ${totF>=0?'pos-val':'neg-val'}" style="font-weight:700">${fmt(totF)}</td><td></td></tr>
-    <tr><td colspan="8" class="note">El saldo inicial es editable — haz clic en la cifra y cámbiala. Útil si no tienes extracto de una cuenta: pon el saldo real de hoy como si fuera el inicial, y registra los movimientos a partir de ahora.</td></tr>` : '');
+    <tr><td colspan="8" class="note">${anio==null ? 'El saldo inicial es editable — haz clic en la cifra y cámbiala. Útil si no tienes extracto de una cuenta: pon el saldo real de hoy como si fuera el inicial, y registra los movimientos a partir de ahora.' : 'Vista de un año concreto: el saldo de inicio se calcula automáticamente a partir de tu histórico y no es editable aquí (edítalo en la vista Global).'}</td></tr>` : '');
 }
 function renderCartera(){
   const pos = posicionesCartera();
@@ -1055,7 +1108,10 @@ function renderCartera(){
   const rows = pos.map(p=>{
     totInv+=p.invTotal; totVal+=p.valor;
     const pl = p.valor - p.invTotal, plPct = p.invTotal>0 ? pl/p.invTotal*100 : 0;
-    return `<tr><td style="font-weight:600">${p.ticker}</td><td>${p.tipo||''}</td><td>${p.broker||''}</td>
+    return `<tr><td style="font-weight:600;min-width:180px">
+        <input type="text" value="${p.nombre.replace(/"/g,'&quot;')}" style="width:100%;background:none;border:1px solid transparent;color:inherit;font-weight:600;font-family:inherit;padding:3px 4px;border-radius:6px" onchange="renombrarActivo('${p.ticker}',this.value)" onfocus="this.style.borderColor='var(--border)'" onblur="this.style.borderColor='transparent'">
+        <div class="note" style="font-size:10px;margin-top:1px">${p.ticker}</div>
+      </td><td>${p.tipo||''}</td><td>${p.broker||''}</td>
       <td class="r num">${p.neta.toLocaleString('es-ES',{maximumFractionDigits:4})}</td>
       <td class="r num">${fmt(p.invTotal)}</td><td class="r num">${fmt(p.ultimoPrecio)}</td>
       <td class="r num" style="font-weight:600">${fmt(p.valor)}</td>
@@ -1066,7 +1122,14 @@ function renderCartera(){
     + rows + `<tr><td style="font-weight:700">TOTAL</td><td colspan="3"></td><td class="r num" style="font-weight:700">${fmt(totInv)}</td><td></td>
       <td class="r num" style="font-weight:700">${fmt(totVal)}</td>
       <td class="r num ${totVal-totInv>=0?'pos-val':'neg-val'}" style="font-weight:700">${totVal-totInv>=0?'+':''}${fmt(totVal-totInv)}</td></tr>
-    <tr><td colspan="8" class="note">Los últimos precios provienen del Excel importado. Registra compras/ventas en «Añadir → Inversión» para actualizar posiciones.</td></tr>`;
+    <tr><td colspan="8" class="note">Haz clic en el nombre de un activo para corregirlo si no es correcto. Los últimos precios provienen del Excel importado. Registra compras/ventas en «Añadir → Inversión» para actualizar posiciones.</td></tr>`;
+}
+function renombrarActivo(ticker, nombre){
+  nombre = nombre.trim();
+  if(nombre && nombre!==ticker) S.nombresActivos[ticker] = nombre;
+  else delete S.nombresActivos[ticker];
+  persistir(); renderCartera();
+  toast('Nombre actualizado ✓');
 }
 function renderPendientes(){
   const pendInvAll = S.inversiones.map((m,i)=>({...m,_i:i})).filter(m=>m.pendiente);
@@ -1094,12 +1157,13 @@ function renderPendientes(){
       <td><input type="text" placeholder="Ticker" id="pTicker${m._i}" style="width:120px"></td>
       <td><input type="number" step="any" placeholder="Nº acc." id="pNum${m._i}" style="width:80px"></td>
       <td><input type="number" step="any" placeholder="Precio €" id="pPrecio${m._i}" style="width:80px"></td>
+      <td><input type="number" step="0.01" placeholder="Comisión €" id="pCom${m._i}" value="${m.comision||''}" style="width:90px"></td>
       <td class="r" style="white-space:nowrap">
         <button class="btn" style="padding:5px 10px" onclick="resolverPendiente(${m._i})">Guardar</button>
         <button class="del-btn" onclick="descartarPendiente(${m._i})" title="No es un activo con ticker, quitar aviso">✕</button>
       </td></tr>`).join('');
     document.getElementById('tablaPendInv').innerHTML =
-      `<tr><th>Fecha</th><th>Descripción</th><th>Broker</th><th class="r">Importe</th><th>Ticker</th><th>Nº acciones</th><th>Precio</th><th></th></tr>` + rows;
+      `<tr><th>Fecha</th><th>Descripción</th><th>Broker</th><th class="r">Importe</th><th>Ticker</th><th>Nº acciones</th><th>Precio</th><th>Comisión</th><th></th></tr>` + rows;
   }
 
   const cardTra = document.getElementById('cardPendTra');
@@ -1138,18 +1202,20 @@ function resolverPendiente(i){
   const t = document.getElementById('pTicker'+i).value.trim();
   const n = parseFloat(document.getElementById('pNum'+i).value);
   const p = parseFloat(document.getElementById('pPrecio'+i).value);
+  const c = parseFloat(document.getElementById('pCom'+i).value);
   if(!t){ toast('Indica al menos el ticker'); return; }
   S.inversiones[i].ticker = t;
   if(!isNaN(n)) S.inversiones[i].numAcciones = n;
   if(!isNaN(p)) S.inversiones[i].precio = p;
+  if(!isNaN(c)) S.inversiones[i].comision = c;
   S.inversiones[i].pendiente = false;
-  const snap = snapshotPendientes(); delete snap['pTicker'+i]; delete snap['pNum'+i]; delete snap['pPrecio'+i];
+  const snap = snapshotPendientes(); delete snap['pTicker'+i]; delete snap['pNum'+i]; delete snap['pPrecio'+i]; delete snap['pCom'+i];
   persistir(); renderAll(); restaurarPendientes(snap); toast('Inversión completada ✓');
 }
 function descartarPendiente(i){
   if(!confirm('¿Quitar el aviso? Seguirá contando como salida de dinero de la cuenta, pero no aparecerá en Cartera de Valores.')) return;
   S.inversiones[i].pendiente = false;
-  const snap = snapshotPendientes(); delete snap['pTicker'+i]; delete snap['pNum'+i]; delete snap['pPrecio'+i];
+  const snap = snapshotPendientes(); delete snap['pTicker'+i]; delete snap['pNum'+i]; delete snap['pPrecio'+i]; delete snap['pCom'+i];
   persistir(); renderAll(); restaurarPendientes(snap); toast('Aviso descartado');
 }
 function resolverPendienteTraspaso(i){
@@ -1179,12 +1245,12 @@ function exportarJSON(){
 function importarJSON(inp){
   const f = inp.files[0]; if(!f) return;
   const r = new FileReader();
-  r.onload = ()=>{ try{ S = JSON.parse(r.result); persistir(); renderAll(); toast('Copia restaurada ✓'); }catch(e){ toast('Archivo no válido'); } };
+  r.onload = ()=>{ try{ S = JSON.parse(r.result); asegurarCampos(); persistir(); renderAll(); toast('Copia restaurada ✓'); }catch(e){ toast('Archivo no válido'); } };
   r.readAsText(f);
 }
 function resetOriginal(){
   if(!confirm('Esto borrará todos los movimientos, cuentas y cartera de esta app. ¿Continuar?')) return;
-  S = JSON.parse(JSON.stringify(DATOS_ORIGINALES)); persistir(); renderAll(); toast('App vaciada');
+  S = JSON.parse(JSON.stringify(DATOS_ORIGINALES)); asegurarCampos(); persistir(); renderAll(); toast('App vaciada');
 }
 
 /* ── Sincronización con Google Drive (Apps Script) ── */
@@ -1235,7 +1301,7 @@ async function cargarDeNube(forzar){
       const remotoTs = remoto.savedAt || '';
       const localTs = S.savedAt || '';
       if(forzar || remotoTs > localTs){
-        S = remoto; persistir(true); renderAll();
+        S = remoto; asegurarCampos(); persistir(true); renderAll();
         setDot('ok','cargado '+(remotoTs?new Date(remotoTs).toLocaleTimeString('es-ES',{hour:'2-digit',minute:'2-digit'}):''));
         if(forzar) toast('Datos cargados desde Drive ✓');
       } else {
