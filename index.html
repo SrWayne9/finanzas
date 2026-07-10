@@ -264,7 +264,7 @@ textarea{width:100%;min-height:180px;font-family:'IBM Plex Mono',monospace;font-
 <div class="toast" id="toast"></div>
 
 <script>
-const DATOS_ORIGINALES = {"ingresos": [], "gastos": [], "inversiones": [], "cuentas": [], "cartera": [], "nombresActivos": {}};
+const DATOS_ORIGINALES = {"ingresos": [], "gastos": [], "inversiones": [], "cuentas": [], "cartera": [], "nombresActivos": {}, "preciosActivos": {}};
 
 const MESES = ['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'];
 const CATS_ING = ['Salario Neto','Extras / Dietas','Rentas / Alquiler','Dividendos','Venta de acciones','Intereses Cuentas Remuneradas','Regalos','Devoluciones','Otros Ingresos'];
@@ -297,7 +297,7 @@ function cargar(){
   try{ const raw = localStorage.getItem(LS_KEY); if(raw){ S = JSON.parse(raw); asegurarCampos(); return; } }catch(e){}
   S = JSON.parse(JSON.stringify(DATOS_ORIGINALES)); asegurarCampos();
 }
-function asegurarCampos(){ if(!S.nombresActivos) S.nombresActivos = {}; }
+function asegurarCampos(){ if(!S.nombresActivos) S.nombresActivos = {}; if(!S.preciosActivos) S.preciosActivos = {}; }
 function persistir(soloLocal){ try{ localStorage.setItem(LS_KEY, JSON.stringify(S)); }catch(e){} if(!soloLocal && typeof programarGuardadoNube==='function') programarGuardadoNube(); }
 cargar();
 
@@ -332,12 +332,12 @@ function seriePatrimonio(){
   let accLiq = liqIni;
   const liq=[], car=[], tot=[], labels=[];
   puntos.forEach(pt=>{
-    S.ingresos.forEach(mv=>{ if(anioDe(mv.fecha)===pt.a && mesDe(mv.fecha)===pt.m && KNOWN.has(mv.cuenta)) accLiq+=mv.importe; });
+    S.ingresos.forEach(mv=>{ if(anioDe(mv.fecha)===pt.a && mesDe(mv.fecha)===pt.m && KNOWN.has(resolverCuenta(mv.cuenta))) accLiq+=mv.importe; });
     S.gastos.forEach(mv=>{ if(anioDe(mv.fecha)!==pt.a || mesDe(mv.fecha)!==pt.m) return;
-      if(esTraspaso(mv)){ if(KNOWN.has(mv.origen)) accLiq-=mv.importe; if(KNOWN.has(mv.destino)) accLiq+=mv.importe; }
-      else if(KNOWN.has(mv.origen)) accLiq-=mv.importe; });
+      if(esTraspaso(mv)){ if(KNOWN.has(resolverCuenta(mv.origen))) accLiq-=mv.importe; if(KNOWN.has(resolverCuenta(mv.destino))) accLiq+=mv.importe; }
+      else if(KNOWN.has(resolverCuenta(mv.origen))) accLiq-=mv.importe; });
     S.inversiones.forEach(mv=>{ if(anioDe(mv.fecha)!==pt.a || mesDe(mv.fecha)!==pt.m) return;
-      if(KNOWN.has(mv.broker)){
+      if(KNOWN.has(resolverCuenta(mv.broker))){
         if(mv.tipoOp==='Compra') accLiq-=(mv.importe||0); else if(mv.tipoOp==='Venta') accLiq+=(mv.importe||0);
         accLiq-=(mv.comision||0);
       }
@@ -371,6 +371,12 @@ const mesDe = f => f ? parseInt(f.slice(5,7),10)-1 : null;
 const anioDe = f => f ? parseInt(f.slice(0,4),10) : null;
 const esTraspaso = g => g.cat === CAT_TRASPASO;
 const normCat = s => (s||'').trim().toLowerCase();
+function resolverCuenta(nombre){
+  if(!nombre) return nombre;
+  if(S.cuentas.some(c=>c.nombre===nombre)) return nombre; // coincide exacto, camino rápido
+  const encontrada = S.cuentas.find(c=>normCat(c.nombre)===normCat(nombre));
+  return encontrada ? encontrada.nombre : nombre; // si no coincide con ninguna cuenta registrada, se deja tal cual (cuentas externas)
+}
 const catCoincide = (catGuardada, catLista) => normCat(catGuardada) === normCat(catLista);
 function catCanonicaLabel(cat, lista){
   const encontrada = lista.find(c=>catCoincide(c,cat));
@@ -412,7 +418,7 @@ function totalesMes(anio){
 }
 function saldosCuentas(anio){
   const map = {}; S.cuentas.forEach(c=> map[c.nombre]={ini:c.saldoInicial, antes:0, ent:0, sal:0, traIn:0, traOut:0, inv:0});
-  const get = n => { if(!n) return null; if(!map[n]) map[n]={ini:0,antes:0,ent:0,sal:0,traIn:0,traOut:0,inv:0}; return map[n]; };
+  const get = n => { const clave = resolverCuenta(n); if(!clave) return null; if(!map[clave]) map[clave]={ini:0,antes:0,ent:0,sal:0,traIn:0,traOut:0,inv:0}; return map[clave]; };
   const enPeriodo = f => anio==null || anioDe(f)===anio;
   const antesDePeriodo = f => anio!=null && anioDe(f)!=null && anioDe(f)<anio;
   S.ingresos.forEach(m=>{const c=get(m.cuenta); if(!c) return; if(enPeriodo(m.fecha)) c.ent+=m.importe; else if(antesDePeriodo(m.fecha)) c.antes+=m.importe;});
@@ -428,21 +434,30 @@ function saldosCuentas(anio){
   });
   return map;
 }
+const normTicker = t => (t||'').trim().toUpperCase();
+function nombreActivoPorTicker(tickerNorm){
+  const claveUsuario = Object.keys(S.nombresActivos).find(k=>normTicker(k)===tickerNorm);
+  if(claveUsuario) return S.nombresActivos[claveUsuario];
+  const claveDefecto = Object.keys(NOMBRES_ACTIVOS_DEFECTO).find(k=>normTicker(k)===tickerNorm);
+  return claveDefecto ? NOMBRES_ACTIVOS_DEFECTO[claveDefecto] : null;
+}
 function posicionesCartera(){
   const porTicker = {};
-  S.inversiones.forEach(m=>{ if(m.ticker) (porTicker[m.ticker]=porTicker[m.ticker]||[]).push(m); });
-  const baseMap = {}; S.cartera.forEach(p=> baseMap[p.ticker]=p);
+  S.inversiones.forEach(m=>{ if(m.ticker){ const k=normTicker(m.ticker); (porTicker[k]=porTicker[k]||[]).push(m); } });
+  const baseMap = {}; S.cartera.forEach(p=> baseMap[normTicker(p.ticker)]=p);
   const tickers = new Set([...Object.keys(porTicker), ...Object.keys(baseMap)]);
 
   const abiertas = [], cerradas = [];
-  tickers.forEach(ticker=>{
-    const base = baseMap[ticker];
+  tickers.forEach(tickerNorm=>{
+    const base = baseMap[tickerNorm];
     let acciones = base?.accionesBase || 0;
     let costeAcum = base?.invBase || 0;
     let ultimoPrecio = base?.ultimoPrecio || 0;
     let realizado = 0, totalVendidoImporte = 0;
     let tipo = base?.tipo || 'Acción', broker = base?.broker;
-    const movs = (porTicker[ticker]||[]).slice().sort((a,b)=>(a.fecha||'').localeCompare(b.fecha||''));
+    const movs = (porTicker[tickerNorm]||[]).slice().sort((a,b)=>(a.fecha||'').localeCompare(b.fecha||''));
+    // Ticker "bonito" para mostrar: el de la cartera base si existe, si no el de la primera compra, si no el primer movimiento tal cual
+    const tickerMostrado = base?.ticker || movs.find(m=>m.tipoOp==='Compra')?.ticker || movs[0]?.ticker || tickerNorm;
     movs.forEach(m=>{
       if(m.precio) ultimoPrecio = m.precio;
       if(m.broker) broker = m.broker;
@@ -459,9 +474,11 @@ function posicionesCartera(){
         totalVendidoImporte += (m.importe||0);
       }
     });
-    const nombre = S.nombresActivos[ticker] || NOMBRES_ACTIVOS_DEFECTO[ticker] || ticker;
+    const nombre = nombreActivoPorTicker(tickerNorm) || tickerMostrado;
+    const precioManual = S.preciosActivos[tickerNorm];
+    if(precioManual!=null) ultimoPrecio = precioManual;
     const netaRedondeada = Math.abs(acciones) < 0.0001 ? 0 : acciones;
-    const registro = { ticker, nombre, tipo, broker, neta:netaRedondeada, invTotal:Math.max(0,costeAcum), ultimoPrecio, valor:Math.max(0,netaRedondeada)*(ultimoPrecio||0), realizado, totalVendidoImporte };
+    const registro = { ticker:tickerMostrado, tickerNorm, nombre, tipo, broker, neta:netaRedondeada, invTotal:Math.max(0,costeAcum), ultimoPrecio, precioManual:precioManual!=null, valor:Math.max(0,netaRedondeada)*(ultimoPrecio||0), realizado, totalVendidoImporte };
     if(netaRedondeada > 0.0001 || registro.invTotal > 0) abiertas.push(registro);
     else if(totalVendidoImporte > 0) cerradas.push(registro);
   });
@@ -701,7 +718,7 @@ function renderMovs(){
   if(mes!=='') movs = movs.filter(m=>mesDe(m.fecha)===parseInt(mes));
   if(cat) movs = movs.filter(m=>catCoincide(m.cat,cat));
   if(txt) movs = movs.filter(m=>(m.desc||'').toLowerCase().includes(txt));
-  if(cuentaF) movs = movs.filter(m=> m.cuenta===cuentaF || m.origen===cuentaF || m.destino===cuentaF);
+  if(cuentaF) movs = movs.filter(m=> resolverCuenta(m.cuenta)===cuentaF || resolverCuenta(m.origen)===cuentaF || resolverCuenta(m.destino)===cuentaF);
   if(!isNaN(impMin)) movs = movs.filter(m=> m.importe>=impMin);
   if(!isNaN(impMax)) movs = movs.filter(m=> m.importe<=impMax);
   const orden = document.getElementById('fOrden').value;
@@ -1118,18 +1135,19 @@ function renderCuentas(){
       <td class="r">${celdaInicio}</td>
       <td class="r num" style="color:var(--ing)">${fmt(s.ent)}</td>
       <td class="r num" style="color:var(--tra)">${fmt(s.traIn)}</td>
-      <td class="r num" style="color:var(--gas)">${fmt(s.sal + s.inv)}</td>
+      <td class="r num" style="color:var(--gas)">${fmt(s.sal)}</td>
+      <td class="r num" style="color:var(--inv)">${fmt(s.inv)}</td>
       <td class="r num" style="color:var(--tra)">${fmt(s.traOut)}</td>
       <td class="r num ${fin>=0?'pos-val':'neg-val'}" style="font-weight:600">${fmt(fin)}</td>
       <td class="r"><button class="del-btn" onclick="borrarCuenta('${c.nombre}')" title="Eliminar cuenta">✕</button></td></tr>`;
   }).join('');
-  const vacio = !S.cuentas.length ? `<tr><td colspan="8" class="note" style="text-align:center;padding:20px">Aún no has añadido ninguna cuenta. Usa el formulario de abajo.</td></tr>` : '';
+  const vacio = !S.cuentas.length ? `<tr><td colspan="9" class="note" style="text-align:center;padding:20px">Aún no has añadido ninguna cuenta. Usa el formulario de abajo.</td></tr>` : '';
   const etiquetaInicio = anio==null ? 'Saldo inicial' : `Saldo a inicios de ${anio}`;
   const etiquetaFinal = anio==null ? 'Saldo actual' : `Saldo a finales de ${anio}`;
   document.getElementById('tablaCuentas').innerHTML =
-    `<tr><th>Cuenta</th><th class="r">${etiquetaInicio}</th><th class="r">Entradas</th><th class="r">Traspasos +</th><th class="r">Salidas</th><th class="r">Traspasos −</th><th class="r">${etiquetaFinal}</th><th></th></tr>`
-    + rows + vacio + (S.cuentas.length ? `<tr><td style="font-weight:700">TOTAL</td><td class="r num" style="font-weight:700">${fmt(totI)}</td><td colspan="4"></td><td class="r num ${totF>=0?'pos-val':'neg-val'}" style="font-weight:700">${fmt(totF)}</td><td></td></tr>
-    <tr><td colspan="8" class="note">${anio==null ? 'El saldo inicial es editable — haz clic en la cifra y cámbiala. Útil si no tienes extracto de una cuenta: pon el saldo real de hoy como si fuera el inicial, y registra los movimientos a partir de ahora.' : 'Vista de un año concreto: el saldo de inicio se calcula automáticamente a partir de tu histórico y no es editable aquí (edítalo en la vista Global).'}</td></tr>` : '');
+    `<tr><th>Cuenta</th><th class="r">${etiquetaInicio}</th><th class="r">Entradas</th><th class="r">Traspasos +</th><th class="r">Gastos</th><th class="r">Inversiones</th><th class="r">Traspasos −</th><th class="r">${etiquetaFinal}</th><th></th></tr>`
+    + rows + vacio + (S.cuentas.length ? `<tr><td style="font-weight:700">TOTAL</td><td class="r num" style="font-weight:700">${fmt(totI)}</td><td colspan="5"></td><td class="r num ${totF>=0?'pos-val':'neg-val'}" style="font-weight:700">${fmt(totF)}</td><td></td></tr>
+    <tr><td colspan="9" class="note">${anio==null ? 'El saldo inicial es editable — haz clic en la cifra y cámbiala. Útil si no tienes extracto de una cuenta: pon el saldo real de hoy como si fuera el inicial, y registra los movimientos a partir de ahora.' : 'Vista de un año concreto: el saldo de inicio se calcula automáticamente a partir de tu histórico y no es editable aquí (edítalo en la vista Global).'} La columna "Inversiones" incluye compras (resta), ventas (suma lo recuperado) y comisiones (siempre restan).</td></tr>` : '');
 }
 function renderCartera(){
   const { abiertas, cerradas } = posicionesCartera();
@@ -1142,7 +1160,11 @@ function renderCartera(){
         <div class="note" style="font-size:10px;margin-top:1px">${p.ticker}</div>
       </td><td>${p.tipo||''}</td><td>${p.broker||''}</td>
       <td class="r num">${p.neta.toLocaleString('es-ES',{maximumFractionDigits:4})}</td>
-      <td class="r num">${fmt(p.invTotal)}</td><td class="r num">${fmt(p.ultimoPrecio)}</td>
+      <td class="r num">${fmt(p.invTotal)}</td>
+      <td class="r">
+        <input type="number" step="any" value="${p.ultimoPrecio||0}" style="width:90px;text-align:right;background:none;border:1px solid transparent;color:inherit;font-family:inherit;padding:3px 4px;border-radius:6px" onchange="actualizarPrecioActivo('${p.tickerNorm}',this.value)" onfocus="this.style.borderColor='var(--border)'" onblur="this.style.borderColor='transparent'">
+        <div class="note" style="font-size:10px;margin-top:1px">${p.precioManual?'manual':'última op.'}</div>
+      </td>
       <td class="r num" style="font-weight:600">${fmt(p.valor)}</td>
       <td class="r num ${pl>=0?'pos-val':'neg-val'}">${pl>=0?'+':''}${fmt(pl)} (${plPct.toFixed(1)}%)</td></tr>`;
   }).join('');
@@ -1152,7 +1174,7 @@ function renderCartera(){
     + rows + vacioAbiertas + (abiertas.length ? `<tr><td style="font-weight:700">TOTAL</td><td colspan="3"></td><td class="r num" style="font-weight:700">${fmt(totInv)}</td><td></td>
       <td class="r num" style="font-weight:700">${fmt(totVal)}</td>
       <td class="r num ${totVal-totInv>=0?'pos-val':'neg-val'}" style="font-weight:700">${totVal-totInv>=0?'+':''}${fmt(totVal-totInv)}</td></tr>` : '')
-    + `<tr><td colspan="8" class="note">Haz clic en el nombre de un activo para corregirlo si no es correcto. Los últimos precios provienen del Excel importado o de tus compras/ventas. Registra compras/ventas en «Añadir → Inversión» para actualizar posiciones.</td></tr>`;
+    + `<tr><td colspan="8" class="note">Nombre y último precio son editables — haz clic sobre ellos y cámbialos. El precio, si no lo editas a mano, se toma de tu última compra/venta registrada (no hay cotización en vivo). Registra compras/ventas en «Añadir → Inversión» para actualizar posiciones.</td></tr>`;
 
   const cardCerradas = document.getElementById('cardVentasRealizadas');
   if(cerradas.length){
@@ -1170,10 +1192,18 @@ function renderCartera(){
 }
 function renombrarActivo(ticker, nombre){
   nombre = nombre.trim();
-  if(nombre && nombre!==ticker) S.nombresActivos[ticker] = nombre;
-  else delete S.nombresActivos[ticker];
+  const clave = normTicker(ticker);
+  // Elimina cualquier entrada previa con distinta capitalización del mismo ticker antes de guardar
+  Object.keys(S.nombresActivos).forEach(k=>{ if(normTicker(k)===clave) delete S.nombresActivos[k]; });
+  if(nombre && nombre!==ticker) S.nombresActivos[clave] = nombre;
   persistir(); renderCartera();
   toast('Nombre actualizado ✓');
+}
+function actualizarPrecioActivo(tickerNorm, valor){
+  const p = parseFloat(valor);
+  if(isNaN(p) || p<=0){ delete S.preciosActivos[tickerNorm]; toast('Precio manual borrado — vuelve a tomarse de la última operación'); }
+  else { S.preciosActivos[tickerNorm] = p; toast('Último precio actualizado ✓'); }
+  persistir(); renderCartera();
 }
 function renderPendientes(){
   const pendInvAll = S.inversiones.map((m,i)=>({...m,_i:i})).filter(m=>m.pendiente);
