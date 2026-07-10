@@ -225,6 +225,11 @@ textarea{width:100%;min-height:180px;font-family:'IBM Plex Mono',monospace;font-
       <button class="btn primary" style="margin-top:10px" onclick="anadirCuenta()">Añadir cuenta</button>
     </div>
     <div class="card scroll-x"><h3>Cartera de valores</h3><table id="tablaCartera"></table></div>
+    <div class="card scroll-x" id="cardVentasRealizadas" style="margin-top:14px;display:none">
+      <h3>Ventas realizadas</h3>
+      <p class="note" style="margin-bottom:10px">Activos que ya no tienes en cartera (vendidos por completo), con la ganancia o pérdida real que obtuviste.</p>
+      <table id="tablaVentasRealizadas"></table>
+    </div>
   </section>
 
   <section id="tab-historico" style="display:none">
@@ -424,21 +429,45 @@ function saldosCuentas(anio){
   return map;
 }
 function posicionesCartera(){
-  const map = {};
-  S.cartera.forEach(p=> map[p.ticker]={...p, compradas:0, vendidas:0, invExtra:0});
-  S.inversiones.forEach(m=>{
-    if(!m.ticker) return;
-    if(!map[m.ticker]) map[m.ticker]={ticker:m.ticker,tipo:'Acción',broker:m.broker,accionesBase:0,invBase:0,ultimoPrecio:m.precio||0,compradas:0,vendidas:0,invExtra:0};
-    const p = map[m.ticker];
-    if(m.tipoOp==='Compra'){ p.compradas+=(m.numAcciones||0); p.invExtra+=(m.importe||0); }
-    else if(m.tipoOp==='Venta'){ p.vendidas+=(m.numAcciones||0); }
-    if(m.precio && !p.ultimoPrecio) p.ultimoPrecio = m.precio;
+  const porTicker = {};
+  S.inversiones.forEach(m=>{ if(m.ticker) (porTicker[m.ticker]=porTicker[m.ticker]||[]).push(m); });
+  const baseMap = {}; S.cartera.forEach(p=> baseMap[p.ticker]=p);
+  const tickers = new Set([...Object.keys(porTicker), ...Object.keys(baseMap)]);
+
+  const abiertas = [], cerradas = [];
+  tickers.forEach(ticker=>{
+    const base = baseMap[ticker];
+    let acciones = base?.accionesBase || 0;
+    let costeAcum = base?.invBase || 0;
+    let ultimoPrecio = base?.ultimoPrecio || 0;
+    let realizado = 0, totalVendidoImporte = 0;
+    let tipo = base?.tipo || 'Acción', broker = base?.broker;
+    const movs = (porTicker[ticker]||[]).slice().sort((a,b)=>(a.fecha||'').localeCompare(b.fecha||''));
+    movs.forEach(m=>{
+      if(m.precio) ultimoPrecio = m.precio;
+      if(m.broker) broker = m.broker;
+      if(m.tipoOp==='Compra'){
+        acciones += (m.numAcciones||0);
+        costeAcum += (m.importe||0);
+      } else if(m.tipoOp==='Venta'){
+        const nVendidas = m.numAcciones||0;
+        const costeMedio = acciones>0.0001 ? costeAcum/acciones : 0;
+        const costeVendido = Math.min(costeAcum, costeMedio*nVendidas);
+        realizado += (m.importe||0) - costeVendido;
+        costeAcum = Math.max(0, costeAcum - costeVendido);
+        acciones -= nVendidas;
+        totalVendidoImporte += (m.importe||0);
+      }
+    });
+    const nombre = S.nombresActivos[ticker] || NOMBRES_ACTIVOS_DEFECTO[ticker] || ticker;
+    const netaRedondeada = Math.abs(acciones) < 0.0001 ? 0 : acciones;
+    const registro = { ticker, nombre, tipo, broker, neta:netaRedondeada, invTotal:Math.max(0,costeAcum), ultimoPrecio, valor:Math.max(0,netaRedondeada)*(ultimoPrecio||0), realizado, totalVendidoImporte };
+    if(netaRedondeada > 0.0001 || registro.invTotal > 0) abiertas.push(registro);
+    else if(totalVendidoImporte > 0) cerradas.push(registro);
   });
-  return Object.values(map).map(p=>{
-    const neta = p.accionesBase + p.compradas - p.vendidas;
-    const nombre = S.nombresActivos[p.ticker] || NOMBRES_ACTIVOS_DEFECTO[p.ticker] || p.ticker;
-    return {...p, neta, nombre, valor: neta * (p.ultimoPrecio||0), invTotal: p.invBase + p.invExtra};
-  }).filter(p=> p.neta > 0.0001 || p.invTotal>0).sort((a,b)=> b.valor-a.valor);
+  abiertas.sort((a,b)=> b.valor-a.valor);
+  cerradas.sort((a,b)=> Math.abs(b.realizado)-Math.abs(a.realizado));
+  return { abiertas, cerradas };
 }
 
 /* ── Panel ── */
@@ -484,7 +513,7 @@ function renderResumenGlobal(){
   const bal = ing-gas-inv-com;
   const mapCuentas = saldosCuentas();
   const liq = S.cuentas.reduce((a,c)=>{const s=mapCuentas[c.nombre]; return a + (s.ini+s.ent+s.traIn-s.sal-s.traOut-s.inv);},0);
-  const car = posicionesCartera().reduce((a,p)=>a+p.valor,0);
+  const car = posicionesCartera().abiertas.reduce((a,p)=>a+p.valor,0);
   document.getElementById('kpisGlobal').innerHTML = `
     <div class="kpi"><div class="lbl">Ingresos históricos</div><div class="val num" style="color:var(--ing)">${fmt(ing)}</div></div>
     <div class="kpi"><div class="lbl">Gastos históricos</div><div class="val num" style="color:var(--gas)">${fmt(gas)}</div></div>
@@ -1103,9 +1132,9 @@ function renderCuentas(){
     <tr><td colspan="8" class="note">${anio==null ? 'El saldo inicial es editable — haz clic en la cifra y cámbiala. Útil si no tienes extracto de una cuenta: pon el saldo real de hoy como si fuera el inicial, y registra los movimientos a partir de ahora.' : 'Vista de un año concreto: el saldo de inicio se calcula automáticamente a partir de tu histórico y no es editable aquí (edítalo en la vista Global).'}</td></tr>` : '');
 }
 function renderCartera(){
-  const pos = posicionesCartera();
+  const { abiertas, cerradas } = posicionesCartera();
   let totInv=0, totVal=0;
-  const rows = pos.map(p=>{
+  const rows = abiertas.map(p=>{
     totInv+=p.invTotal; totVal+=p.valor;
     const pl = p.valor - p.invTotal, plPct = p.invTotal>0 ? pl/p.invTotal*100 : 0;
     return `<tr><td style="font-weight:600;min-width:180px">
@@ -1117,12 +1146,27 @@ function renderCartera(){
       <td class="r num" style="font-weight:600">${fmt(p.valor)}</td>
       <td class="r num ${pl>=0?'pos-val':'neg-val'}">${pl>=0?'+':''}${fmt(pl)} (${plPct.toFixed(1)}%)</td></tr>`;
   }).join('');
+  const vacioAbiertas = !abiertas.length ? `<tr><td colspan="8" class="note" style="text-align:center;padding:16px">No tienes posiciones abiertas.</td></tr>` : '';
   document.getElementById('tablaCartera').innerHTML =
-    `<tr><th>Activo</th><th>Tipo</th><th>Broker</th><th class="r">Posición</th><th class="r">Invertido</th><th class="r">Últ. precio</th><th class="r">Valor</th><th class="r">P/L</th></tr>`
-    + rows + `<tr><td style="font-weight:700">TOTAL</td><td colspan="3"></td><td class="r num" style="font-weight:700">${fmt(totInv)}</td><td></td>
+    `<tr><th>Activo</th><th>Tipo</th><th>Broker</th><th class="r">Posición</th><th class="r">Invertido</th><th class="r">Últ. precio</th><th class="r">Valor</th><th class="r">P/L no realizado</th></tr>`
+    + rows + vacioAbiertas + (abiertas.length ? `<tr><td style="font-weight:700">TOTAL</td><td colspan="3"></td><td class="r num" style="font-weight:700">${fmt(totInv)}</td><td></td>
       <td class="r num" style="font-weight:700">${fmt(totVal)}</td>
-      <td class="r num ${totVal-totInv>=0?'pos-val':'neg-val'}" style="font-weight:700">${totVal-totInv>=0?'+':''}${fmt(totVal-totInv)}</td></tr>
-    <tr><td colspan="8" class="note">Haz clic en el nombre de un activo para corregirlo si no es correcto. Los últimos precios provienen del Excel importado. Registra compras/ventas en «Añadir → Inversión» para actualizar posiciones.</td></tr>`;
+      <td class="r num ${totVal-totInv>=0?'pos-val':'neg-val'}" style="font-weight:700">${totVal-totInv>=0?'+':''}${fmt(totVal-totInv)}</td></tr>` : '')
+    + `<tr><td colspan="8" class="note">Haz clic en el nombre de un activo para corregirlo si no es correcto. Los últimos precios provienen del Excel importado o de tus compras/ventas. Registra compras/ventas en «Añadir → Inversión» para actualizar posiciones.</td></tr>`;
+
+  const cardCerradas = document.getElementById('cardVentasRealizadas');
+  if(cerradas.length){
+    cardCerradas.style.display='';
+    const totRealizado = cerradas.reduce((a,p)=>a+p.realizado,0);
+    const rowsC = cerradas.map(p=>`<tr><td style="font-weight:600">${p.nombre}<div class="note" style="font-size:10px">${p.ticker}</div></td><td>${p.broker||''}</td>
+      <td class="r num">${fmt(p.totalVendidoImporte)}</td>
+      <td class="r num ${p.realizado>=0?'pos-val':'neg-val'}" style="font-weight:600">${p.realizado>=0?'+':''}${fmt(p.realizado)}</td></tr>`).join('');
+    document.getElementById('tablaVentasRealizadas').innerHTML =
+      `<tr><th>Activo</th><th>Broker</th><th class="r">Total vendido</th><th class="r">Ganancia/pérdida realizada</th></tr>` + rowsC +
+      `<tr><td style="font-weight:700" colspan="3">TOTAL REALIZADO</td><td class="r num ${totRealizado>=0?'pos-val':'neg-val'}" style="font-weight:700">${totRealizado>=0?'+':''}${fmt(totRealizado)}</td></tr>`;
+  } else {
+    cardCerradas.style.display='none';
+  }
 }
 function renombrarActivo(ticker, nombre){
   nombre = nombre.trim();
