@@ -1208,15 +1208,50 @@ function detectarCuentasHuerfanas(){
   S.inversiones.forEach(m=> marcar(m.broker, m.desc||m.ticker));
   return Object.values(huerfanas);
 }
+function detectarMovimientosSinCuenta(){
+  const sinCuenta = [];
+  S.ingresos.forEach((m,i)=>{ if(!m.cuenta) sinCuenta.push({tipo:'Ingreso', desc:m.desc, importe:m.importe, fecha:m.fecha}); });
+  S.gastos.forEach((m,i)=>{ if(!esTraspaso(m) && !m.origen) sinCuenta.push({tipo:'Gasto', desc:m.desc, importe:m.importe, fecha:m.fecha}); });
+  S.inversiones.forEach((m,i)=>{ if(!m.broker) sinCuenta.push({tipo:'Inversión', desc:m.desc||m.ticker, importe:m.importe, fecha:m.fecha}); });
+  return sinCuenta;
+}
+function detectarPosiblesDuplicados(){
+  const ventasIngreso = S.ingresos.filter(m=>normCat(m.cat)===normCat('Venta de acciones'));
+  const ventasInversion = S.inversiones.filter(m=>m.tipoOp==='Venta');
+  const dups = [];
+  ventasIngreso.forEach(a=>{
+    const match = ventasInversion.find(b=> b.fecha===a.fecha && Math.abs((b.importe||0)-(a.importe||0))<0.01);
+    if(match) dups.push({fecha:a.fecha, importe:a.importe});
+  });
+  return dups;
+}
 function renderAvisoHuerfanas(){
   const el = document.getElementById('avisoHuerfanas');
   if(!el) return;
   const huerfanas = detectarCuentasHuerfanas();
-  if(!huerfanas.length){ el.style.display='none'; return; }
+  const sinCuenta = detectarMovimientosSinCuenta();
+  const dups = detectarPosiblesDuplicados();
+  if(!huerfanas.length && !sinCuenta.length && !dups.length){ el.style.display='none'; return; }
   el.style.display='';
-  el.innerHTML = `⚠ Hay ${huerfanas.length} nombre(s) de cuenta en tus movimientos que no coinciden con ninguna cuenta registrada ni externa conocida — ese dinero no se está sumando a ningún saldo visible:<br>` +
-    huerfanas.map(h=>`· <strong>"${h.nombre}"</strong> en ${h.n} movimiento(s) (ej.: "${h.ejemplo||''}")`).join('<br>') +
-    `<br>Búscalos en Movimientos (filtro de texto) y edítalos para asignarles la cuenta correcta del desplegable.`;
+  let html = '';
+  if(dups.length){
+    html += `⚠ Hay ${dups.length} venta(s) que parecen estar registradas DOS VECES: una vez como Ingreso "Venta de acciones" y otra vez como Inversión → Venta, con la misma fecha e importe (esto suma el dinero dos veces):<br>` +
+      dups.map(d=>`· ${d.fecha} — ${fmt(d.importe)}`).join('<br>') +
+      `<br>Ve a Movimientos, busca ese ingreso duplicado y bórralo (deja solo la versión de tipo Inversión).<br><br>`;
+  }
+  if(huerfanas.length){
+    html += `⚠ Hay ${huerfanas.length} nombre(s) de cuenta en tus movimientos que no coinciden con ninguna cuenta registrada ni externa conocida — ese dinero no se está sumando a ningún saldo visible:<br>` +
+      huerfanas.map(h=>`· <strong>"${h.nombre}"</strong> en ${h.n} movimiento(s) (ej.: "${h.ejemplo||''}")`).join('<br>') +
+      `<br>Búscalos en Movimientos (filtro de texto) y edítalos para asignarles la cuenta correcta del desplegable.<br><br>`;
+  }
+  if(sinCuenta.length){
+    const suma = sinCuenta.reduce((a,m)=>a+(m.importe||0),0);
+    html += `⚠ Hay ${sinCuenta.length} movimiento(s) sin ninguna cuenta asignada (${fmt(suma)} en total) — no afectan a ningún saldo aunque deberían:<br>` +
+      sinCuenta.slice(0,8).map(m=>`· ${m.fecha||''} — ${m.tipo}: "${m.desc||''}" (${fmt(m.importe)})`).join('<br>') +
+      (sinCuenta.length>8 ? `<br>…y ${sinCuenta.length-8} más.` : '') +
+      `<br>Edítalos en Movimientos y asígnales una cuenta.`;
+  }
+  el.innerHTML = html;
 }
 function renombrarActivo(ticker, nombre){
   nombre = nombre.trim();
