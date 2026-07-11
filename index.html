@@ -212,6 +212,7 @@ textarea{width:100%;min-height:180px;font-family:'IBM Plex Mono',monospace;font-
   </section>
 
   <section id="tab-cuentas" style="display:none">
+    <div class="note" id="avisoHuerfanas" style="display:none;background:rgba(242,185,75,.1);border:1px solid var(--bal);border-radius:10px;padding:12px 14px;margin-bottom:14px;color:var(--bal);line-height:1.6"></div>
     <div class="card scroll-x" style="margin-bottom:14px">
       <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;margin-bottom:12px">
         <h3 style="margin:0">Cuentas bancarias</h3>
@@ -778,19 +779,21 @@ function cuentasOptTraspaso(sel){
 function renderForm(){
   const hoy = new Date().toISOString().slice(0,10);
   const g = document.getElementById('formGrid');
+  const cta1 = S.cuentas[0]?.nombre || '';
+  const cta2 = S.cuentas[1]?.nombre || cta1;
   const base = `<div class="fld"><label>Fecha</label><input type="date" id="aFecha" value="${hoy}"></div>
     <div class="fld"><label>Descripción</label><input type="text" id="aDesc" placeholder="Descripción"></div>
     <div class="fld"><label>Importe (€)</label><input type="number" step="0.01" id="aImporte" placeholder="0,00"></div>`;
   if(tipoAdd==='gasto') g.innerHTML = base +
     `<div class="fld"><label>Categoría</label><select id="aCat">${optHtml(CATS_GAS)}</select></div>
-     <div class="fld"><label>Cuenta origen</label><select id="aOrigen">${cuentasOpt('BBVA')}</select></div>
+     <div class="fld"><label>Cuenta origen</label><select id="aOrigen">${cuentasOpt(cta1)}</select></div>
      <div class="fld"><label>Tipo de pago</label><select id="aPago"><option>Débito</option><option>Crédito</option><option>Efectivo</option><option>Bizum</option><option>PayPal</option></select></div>`;
   else if(tipoAdd==='ingreso') g.innerHTML = base +
     `<div class="fld"><label>Categoría</label><select id="aCat">${optHtml(CATS_ING)}</select></div>
-     <div class="fld"><label>Cuenta destino</label><select id="aCuenta">${cuentasOpt('BBVA')}</select></div>`;
+     <div class="fld"><label>Cuenta destino</label><select id="aCuenta">${cuentasOpt(cta1)}</select></div>`;
   else if(tipoAdd==='traspaso') g.innerHTML = base +
-    `<div class="fld"><label>Cuenta origen</label><select id="aOrigen">${cuentasOptTraspasoRev('BBVA')}</select></div>
-     <div class="fld"><label>Cuenta destino</label><select id="aDestino">${cuentasOptTraspasoRev('Trade Republic')}</select></div>`;
+    `<div class="fld"><label>Cuenta origen</label><select id="aOrigen">${cuentasOptTraspasoRev(cta1)}</select></div>
+     <div class="fld"><label>Cuenta destino</label><select id="aDestino">${cuentasOptTraspasoRev(cta2)}</select></div>`;
   else g.innerHTML = base +
     `<div class="fld"><label>Categoría</label><select id="aCatInv" onchange="toggleTickerFields()">
        <option value="">Compra/venta de activo (con ticker)</option>
@@ -801,7 +804,7 @@ function renderForm(){
      <div class="fld" id="fldNum"><label>Nº acciones</label><input type="number" step="any" id="aNum"></div>
      <div class="fld" id="fldPrecio"><label>Precio por acción (€)</label><input type="number" step="any" id="aPrecio"></div>
      <div class="fld"><label>Comisión (€)</label><input type="number" step="0.01" id="aCom" value="0"></div>
-     <div class="fld"><label>Broker</label><select id="aBroker">${cuentasOpt('Trade Republic')}</select></div>`;
+     <div class="fld"><label>Broker</label><select id="aBroker">${cuentasOpt(cta2)}</select></div>`;
 }
 function toggleTickerFields(){
   const cat = document.getElementById('aCatInv')?.value;
@@ -1119,6 +1122,7 @@ function editarSaldoInicial(nombre, input){
   persistir(); renderAll(); toast('Saldo inicial actualizado ✓');
 }
 function renderCuentas(){
+  renderAvisoHuerfanas();
   const sel = document.getElementById('fCuentasAnio');
   const anio = sel.value ? parseInt(sel.value) : null;
   const map = saldosCuentas(anio);
@@ -1189,6 +1193,30 @@ function renderCartera(){
   } else {
     cardCerradas.style.display='none';
   }
+}
+function detectarCuentasHuerfanas(){
+  const conocidas = new Set([...S.cuentas.map(c=>normCat(c.nombre)), ...CUENTAS_EXTERNAS.map(normCat)]);
+  const huerfanas = {};
+  const marcar = (nombre, ref) => {
+    if(!nombre) return;
+    if(conocidas.has(normCat(nombre))) return; // coincide (quizá con otra capitalización) con una cuenta real
+    if(!huerfanas[nombre]) huerfanas[nombre] = {nombre, n:0, ejemplo:ref};
+    huerfanas[nombre].n++;
+  };
+  S.ingresos.forEach(m=> marcar(m.cuenta, m.desc));
+  S.gastos.forEach(m=>{ marcar(m.origen, m.desc); if(esTraspaso(m)) marcar(m.destino, m.desc); });
+  S.inversiones.forEach(m=> marcar(m.broker, m.desc||m.ticker));
+  return Object.values(huerfanas);
+}
+function renderAvisoHuerfanas(){
+  const el = document.getElementById('avisoHuerfanas');
+  if(!el) return;
+  const huerfanas = detectarCuentasHuerfanas();
+  if(!huerfanas.length){ el.style.display='none'; return; }
+  el.style.display='';
+  el.innerHTML = `⚠ Hay ${huerfanas.length} nombre(s) de cuenta en tus movimientos que no coinciden con ninguna cuenta registrada ni externa conocida — ese dinero no se está sumando a ningún saldo visible:<br>` +
+    huerfanas.map(h=>`· <strong>"${h.nombre}"</strong> en ${h.n} movimiento(s) (ej.: "${h.ejemplo||''}")`).join('<br>') +
+    `<br>Búscalos en Movimientos (filtro de texto) y edítalos para asignarles la cuenta correcta del desplegable.`;
 }
 function renombrarActivo(ticker, nombre){
   nombre = nombre.trim();
