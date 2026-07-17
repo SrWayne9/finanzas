@@ -417,6 +417,19 @@ function totalesMes(anio){
   t.forEach(x=> x.bal = x.ing - x.gas - x.inv - x.com);
   return t;
 }
+function traspasosMes(anio){
+  // Traspasos entrantes/salientes agregados en TODAS las cuentas registradas (las internas entre tus propias
+  // cuentas se cancelan solas al sumar; solo queda un efecto neto cuando entra/sale dinero de una cuenta externa).
+  const KNOWN = new Set(S.cuentas.map(c=>c.nombre));
+  const t = MESES.map(()=>({in:0,out:0}));
+  S.gastos.forEach(m=>{
+    if(!esTraspaso(m)) return;
+    const i = mesDe(m.fecha); if(i==null || anioDe(m.fecha)!==anio) return;
+    if(KNOWN.has(resolverCuenta(m.origen))) t[i].out += m.importe;
+    if(KNOWN.has(resolverCuenta(m.destino))) t[i].in += m.importe;
+  });
+  return t;
+}
 function saldosCuentas(anio){
   const map = {}; S.cuentas.forEach(c=> map[c.nombre]={ini:c.saldoInicial, antes:0, ent:0, sal:0, traIn:0, traOut:0, inv:0});
   const get = n => { const clave = resolverCuenta(n); if(!clave) return null; if(!map[clave]) map[clave]={ini:0,antes:0,ent:0,sal:0,traIn:0,traOut:0,inv:0}; return map[clave]; };
@@ -507,13 +520,15 @@ function renderMonthStrip(){
 }
 function renderKpis(){
   const t = totalesMes(AÑO_ACTUAL);
+  const tt = traspasosMes(AÑO_ACTUAL);
   document.getElementById('anioActualLbl').textContent = AÑO_ACTUAL;
-  let ing,gas,inv,com,lbl;
-  if(mesSel==='ANO'){ ing=t.reduce((a,x)=>a+x.ing,0); gas=t.reduce((a,x)=>a+x.gas,0); inv=t.reduce((a,x)=>a+x.inv,0); com=t.reduce((a,x)=>a+x.com,0); lbl=AÑO_ACTUAL+' completo'; }
-  else { ing=t[mesSel].ing; gas=t[mesSel].gas; inv=t[mesSel].inv; com=t[mesSel].com; lbl=MESES[mesSel]+' '+AÑO_ACTUAL; }
+  let ing,gas,inv,com,traIn,traOut,lbl;
+  if(mesSel==='ANO'){ ing=t.reduce((a,x)=>a+x.ing,0); gas=t.reduce((a,x)=>a+x.gas,0); inv=t.reduce((a,x)=>a+x.inv,0); com=t.reduce((a,x)=>a+x.com,0); traIn=tt.reduce((a,x)=>a+x.in,0); traOut=tt.reduce((a,x)=>a+x.out,0); lbl=AÑO_ACTUAL+' completo'; }
+  else { ing=t[mesSel].ing; gas=t[mesSel].gas; inv=t[mesSel].inv; com=t[mesSel].com; traIn=tt[mesSel].in; traOut=tt[mesSel].out; lbl=MESES[mesSel]+' '+AÑO_ACTUAL; }
   const bal = ing-gas-inv-com;
   const tAho = ing>0 ? (inv/ing*100) : 0;
   const tGas = ing>0 ? (gas/ing*100) : 0;
+  const tAhoGlobal = ing>0 ? ((ing - gas - traOut + traIn) / ing * 100) : 0;
   document.getElementById('resumenPeriodo').textContent = lbl;
   document.getElementById('kpis').innerHTML = `
     <div class="kpi"><div class="lbl">Ingresos</div><div class="val num" style="color:var(--ing)">${fmt(ing)}</div></div>
@@ -521,7 +536,8 @@ function renderKpis(){
     <div class="kpi"><div class="lbl">Inversiones</div><div class="val num" style="color:var(--inv)">${fmt(inv)}</div><div class="sub num">Comisiones: ${fmt(com)}</div></div>
     <div class="kpi"><div class="lbl">Balance</div><div class="val num" style="color:${bal>=0?'var(--ing)':'var(--gas)'}">${fmt(bal)}</div></div>
     <div class="kpi"><div class="lbl">Tasa de ahorro</div><div class="val num">${tAho.toFixed(1)}%</div><div class="sub">Objetivo &gt; 20%</div></div>
-    <div class="kpi"><div class="lbl">Tasa de gasto</div><div class="val num">${tGas.toFixed(1)}%</div><div class="sub">Recomendado &lt; 70%</div></div>`;
+    <div class="kpi"><div class="lbl">Tasa de gasto</div><div class="val num">${tGas.toFixed(1)}%</div><div class="sub">Recomendado &lt; 70%</div></div>
+    <div class="kpi"><div class="lbl">Tasa de ahorro global</div><div class="val num" style="color:var(--bal)">${tAhoGlobal.toFixed(1)}%</div><div class="sub">Ingresos − Gastos − traspasos netos hacia fuera, sobre ingresos</div></div>`;
 }
 function renderResumenGlobal(){
   const ing = S.ingresos.reduce((a,m)=>a+m.importe,0);
