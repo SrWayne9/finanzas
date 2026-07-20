@@ -138,7 +138,8 @@ textarea{width:100%;min-height:180px;font-family:'IBM Plex Mono',monospace;font-
   <section id="tab-movs" style="display:none">
     <div class="filters">
       <select id="fTipo" onchange="actualizarFCatPorTipo();renderMovs()"><option value="">Todos los tipos</option><option value="ingreso">Ingresos</option><option value="gasto">Gastos</option><option value="traspaso">Traspasos</option><option value="inversion">Inversiones</option></select>
-      <select id="fMes" onchange="renderMovs()"><option value="">Todo el año</option></select>
+      <select id="fAnio" onchange="renderMovs()"><option value="">Todos los años</option></select>
+      <select id="fMes" onchange="renderMovs()"><option value="">Todos los meses</option></select>
       <select id="fCat" onchange="renderMovs()"><option value="">Todas las categorías</option></select>
       <select id="fCuenta" onchange="renderMovs()"><option value="">Todas las cuentas</option></select>
       <select id="fOrden" onchange="renderMovs()">
@@ -224,6 +225,10 @@ textarea{width:100%;min-height:180px;font-family:'IBM Plex Mono',monospace;font-
         <div class="fld"><label>Saldo inicial (€)</label><input type="number" step="0.01" id="nvCuentaSaldo" placeholder="0,00"></div>
       </div>
       <button class="btn primary" style="margin-top:10px" onclick="anadirCuenta()">Añadir cuenta</button>
+    </div>
+    <div class="card" id="cardResumenPatrimonio" style="margin-bottom:14px">
+      <h3>Resumen</h3>
+      <div class="kpis" id="kpisResumenCartera"></div>
     </div>
     <div class="card scroll-x"><h3>Cartera de valores</h3><table id="tablaCartera"></table></div>
     <div class="card scroll-x" id="cardVentasRealizadas" style="margin-top:14px;display:none">
@@ -430,6 +435,12 @@ function traspasosMes(anio){
   });
   return t;
 }
+function balancePeriodo(anio){
+  const t = totalesMes(anio).reduce((acc,x)=>({ing:acc.ing+x.ing,gas:acc.gas+x.gas,inv:acc.inv+x.inv,com:acc.com+x.com}),{ing:0,gas:0,inv:0,com:0});
+  const tt = traspasosMes(anio).reduce((acc,x)=>({in:acc.in+x.in,out:acc.out+x.out}),{in:0,out:0});
+  const bal = t.ing - t.gas - t.inv - t.com - tt.out + tt.in;
+  return {...t, traIn:tt.in, traOut:tt.out, bal};
+}
 function saldosCuentas(anio){
   const map = {}; S.cuentas.forEach(c=> map[c.nombre]={ini:c.saldoInicial, antes:0, ent:0, sal:0, traIn:0, traOut:0, inv:0});
   const get = n => { const clave = resolverCuenta(n); if(!clave) return null; if(!map[clave]) map[clave]={ini:0,antes:0,ent:0,sal:0,traIn:0,traOut:0,inv:0}; return map[clave]; };
@@ -525,7 +536,7 @@ function renderKpis(){
   let ing,gas,inv,com,traIn,traOut,lbl;
   if(mesSel==='ANO'){ ing=t.reduce((a,x)=>a+x.ing,0); gas=t.reduce((a,x)=>a+x.gas,0); inv=t.reduce((a,x)=>a+x.inv,0); com=t.reduce((a,x)=>a+x.com,0); traIn=tt.reduce((a,x)=>a+x.in,0); traOut=tt.reduce((a,x)=>a+x.out,0); lbl=AÑO_ACTUAL+' completo'; }
   else { ing=t[mesSel].ing; gas=t[mesSel].gas; inv=t[mesSel].inv; com=t[mesSel].com; traIn=tt[mesSel].in; traOut=tt[mesSel].out; lbl=MESES[mesSel]+' '+AÑO_ACTUAL; }
-  const bal = ing-gas-inv-com;
+  const bal = ing-gas-inv-com-traOut+traIn;
   const tAho = ing>0 ? (inv/ing*100) : 0;
   const tGas = ing>0 ? (gas/ing*100) : 0;
   const tAhoGlobal = ing>0 ? ((ing - gas - traOut + traIn) / ing * 100) : 0;
@@ -535,7 +546,7 @@ function renderKpis(){
     <div class="kpi"><div class="lbl">Gastos</div><div class="val num" style="color:var(--gas)">${fmt(gas)}</div></div>
     <div class="kpi"><div class="lbl">Inversiones</div><div class="val num" style="color:var(--inv)">${fmt(inv)}</div><div class="sub num">Comisiones: ${fmt(com)}</div></div>
     <div class="kpi"><div class="lbl">Balance</div><div class="val num" style="color:${bal>=0?'var(--ing)':'var(--gas)'}">${fmt(bal)}</div></div>
-    <div class="kpi"><div class="lbl">Tasa de ahorro</div><div class="val num">${tAho.toFixed(1)}%</div><div class="sub">Objetivo &gt; 20%</div></div>
+    <div class="kpi"><div class="lbl">Tasa ahorro inversiones</div><div class="val num">${tAho.toFixed(1)}%</div><div class="sub">Objetivo &gt; 20%</div></div>
     <div class="kpi"><div class="lbl">Tasa de gasto</div><div class="val num">${tGas.toFixed(1)}%</div><div class="sub">Recomendado &lt; 70%</div></div>
     <div class="kpi"><div class="lbl">Tasa de ahorro global</div><div class="val num" style="color:var(--bal)">${tAhoGlobal.toFixed(1)}%</div><div class="sub">Ingresos − Gastos − traspasos netos hacia fuera, sobre ingresos</div></div>`;
 }
@@ -544,7 +555,10 @@ function renderResumenGlobal(){
   const gas = S.gastos.filter(m=>!esTraspaso(m)).reduce((a,m)=>a+m.importe,0);
   const inv = S.inversiones.filter(m=>m.tipoOp==='Compra').reduce((a,m)=>a+m.importe,0);
   const com = S.inversiones.reduce((a,m)=>a+(m.comision||0),0);
-  const bal = ing-gas-inv-com;
+  const KNOWN = new Set(S.cuentas.map(c=>c.nombre));
+  let traIn=0, traOut=0;
+  S.gastos.forEach(m=>{ if(!esTraspaso(m)) return; if(KNOWN.has(resolverCuenta(m.origen))) traOut+=m.importe; if(KNOWN.has(resolverCuenta(m.destino))) traIn+=m.importe; });
+  const bal = ing-gas-inv-com-traOut+traIn;
   const mapCuentas = saldosCuentas();
   const liq = S.cuentas.reduce((a,c)=>{const s=mapCuentas[c.nombre]; return a + (s.ini+s.ent+s.traIn-s.sal-s.traOut-s.inv);},0);
   const car = posicionesCartera().abiertas.reduce((a,p)=>a+p.valor,0);
@@ -558,14 +572,14 @@ function renderResumenGlobal(){
 function renderFlujoHistorico(){
   const anios = añosDisponibles();
   const css = v => getComputedStyle(document.documentElement).getPropertyValue(v).trim();
-  const datos = anios.map(a=> totalesMes(a).reduce((acc,x)=>({ing:acc.ing+x.ing,gas:acc.gas+x.gas,inv:acc.inv+x.inv,com:acc.com+x.com}),{ing:0,gas:0,inv:0,com:0}));
+  const datos = anios.map(a=> balancePeriodo(a));
   if(chartFlujoHist) chartFlujoHist.destroy();
   chartFlujoHist = new Chart(document.getElementById('chartFlujoHist'),{
     data:{labels:anios.map(String),datasets:[
       {type:'bar',label:'Ingresos',data:datos.map(d=>d.ing),backgroundColor:css('--ing')+'cc',borderRadius:4},
       {type:'bar',label:'Gastos',data:datos.map(d=>d.gas),backgroundColor:css('--gas')+'cc',borderRadius:4},
       {type:'bar',label:'Inversiones',data:datos.map(d=>d.inv),backgroundColor:css('--inv')+'cc',borderRadius:4},
-      {type:'line',label:'Balance',data:datos.map(d=>d.ing-d.gas-d.inv-d.com),borderColor:css('--bal'),backgroundColor:css('--bal'),tension:.35,pointRadius:4}
+      {type:'line',label:'Balance',data:datos.map(d=>d.bal),borderColor:css('--bal'),backgroundColor:css('--bal'),tension:.35,pointRadius:4}
     ]},
     options:{maintainAspectRatio:false,plugins:{legend:{labels:{boxWidth:10,boxHeight:10}}},scales:{y:{grid:{color:'#1c222c'}},x:{grid:{display:false}}}}
   });
@@ -611,14 +625,13 @@ function renderHistorico(){
   const anios = añosDisponibles();
   const movs = movsUnificados();
   const rows = anios.map(a=>{
-    const t = totalesMes(a).reduce((acc,x)=>({ing:acc.ing+x.ing,gas:acc.gas+x.gas,inv:acc.inv+x.inv,com:acc.com+x.com}),{ing:0,gas:0,inv:0,com:0});
-    const bal = t.ing-t.gas-t.inv-t.com;
+    const t = balancePeriodo(a);
     const n = movs.filter(m=>anioDe(m.fecha)===a).length;
     return `<tr><td style="font-weight:600">${a} ${a===AÑO_ACTUAL?'<span class="tag ing">actual</span>':''}</td>
       <td class="r num" style="color:var(--ing)">${fmt(t.ing)}</td>
       <td class="r num" style="color:var(--gas)">${fmt(t.gas)}</td>
       <td class="r num" style="color:var(--inv)">${fmt(t.inv)}</td>
-      <td class="r num" style="color:${bal>=0?'var(--ing)':'var(--gas)'}">${fmt(bal)}</td>
+      <td class="r num" style="color:${t.bal>=0?'var(--ing)':'var(--gas)'}">${fmt(t.bal)}</td>
       <td class="r num" style="color:var(--muted)">${n}</td></tr>`;
   }).join('');
   document.getElementById('tablaHistorico').innerHTML =
@@ -705,6 +718,11 @@ function actualizarFCatPorTipo(){
   fCat.value = opciones.some(c=>catCoincide(c,valPrevio)) ? valPrevio : '';
 }
 function renderFiltros(){
+  const fAnio = document.getElementById('fAnio');
+  const anioPrevioMovs = fAnio.value;
+  fAnio.innerHTML = '<option value="">Todos los años</option>';
+  añosDisponibles().forEach(a=> fAnio.add(new Option(a,a)));
+  fAnio.value = anioPrevioMovs;
   const fMes = document.getElementById('fMes');
   if(fMes.options.length===1) MESES.forEach((m,i)=> fMes.add(new Option(m,i)));
   actualizarFCatPorTipo();
@@ -723,6 +741,7 @@ function renderFiltros(){
 }
 function renderMovs(){
   const tipo = document.getElementById('fTipo').value;
+  const anio = document.getElementById('fAnio').value;
   const mes = document.getElementById('fMes').value;
   const cat = document.getElementById('fCat').value;
   const txt = document.getElementById('fTexto').value.toLowerCase();
@@ -732,6 +751,7 @@ function renderMovs(){
   const todos = movsUnificados();
   let movs = todos;
   if(tipo) movs = movs.filter(m=>m.tipo===tipo);
+  if(anio!=='') movs = movs.filter(m=>anioDe(m.fecha)===parseInt(anio));
   if(mes!=='') movs = movs.filter(m=>mesDe(m.fecha)===parseInt(mes));
   if(cat) movs = movs.filter(m=>catCoincide(m.cat,cat));
   if(txt) movs = movs.filter(m=>(m.desc||'').toLowerCase().includes(txt));
@@ -745,7 +765,7 @@ function renderMovs(){
   else if(orden==='importe_asc') movsOrdenados.sort((a,b)=> a.importe-b.importe);
   // 'fecha_desc' es el orden por defecto que ya trae movsUnificados()
   movs = movsOrdenados;
-  const hayFiltro = tipo||mes!==''||cat||txt||cuentaF||!isNaN(impMin)||!isNaN(impMax);
+  const hayFiltro = tipo||anio!==''||mes!==''||cat||txt||cuentaF||!isNaN(impMin)||!isNaN(impMax);
   const sumaImporte = movs.reduce((a,m)=>a+m.importe,0);
   document.getElementById('movsContador').textContent = hayFiltro
     ? `${movs.length} de ${todos.length} movimientos · suma: ${fmt(sumaImporte)}`
@@ -1170,6 +1190,8 @@ function renderCuentas(){
     <tr><td colspan="9" class="note">${anio==null ? 'El saldo inicial es editable — haz clic en la cifra y cámbiala. Útil si no tienes extracto de una cuenta: pon el saldo real de hoy como si fuera el inicial, y registra los movimientos a partir de ahora.' : 'Vista de un año concreto: el saldo de inicio se calcula automáticamente a partir de tu histórico y no es editable aquí (edítalo en la vista Global).'} La columna "Inversiones" incluye compras (resta), ventas (suma lo recuperado) y comisiones (siempre restan).</td></tr>` : '');
 }
 function renderCartera(){
+  const mapCuentas = saldosCuentas(); // global, igual que el TOTAL de la tabla de Cuentas bancarias
+  const totCuentas = S.cuentas.reduce((a,c)=>{const s=mapCuentas[c.nombre]; return a + (s.ini+s.ent+s.traIn-s.sal-s.traOut-s.inv);},0);
   const { abiertas, cerradas } = posicionesCartera();
   let totInv=0, totVal=0;
   const rows = abiertas.map(p=>{
@@ -1189,6 +1211,10 @@ function renderCartera(){
       <td class="r num ${pl>=0?'pos-val':'neg-val'}">${pl>=0?'+':''}${fmt(pl)} (${plPct.toFixed(1)}%)</td></tr>`;
   }).join('');
   const vacioAbiertas = !abiertas.length ? `<tr><td colspan="8" class="note" style="text-align:center;padding:16px">No tienes posiciones abiertas.</td></tr>` : '';
+  document.getElementById('kpisResumenCartera').innerHTML = `
+    <div class="kpi"><div class="lbl">Total cuentas bancarias</div><div class="val num" style="color:var(--tra)">${fmt(totCuentas)}</div><div class="sub">Suma del TOTAL de la tabla de Cuentas bancarias</div></div>
+    <div class="kpi"><div class="lbl">Total cartera de valores</div><div class="val num" style="color:var(--inv)">${fmt(totVal)}</div><div class="sub">Solo posiciones abiertas</div></div>
+    <div class="kpi"><div class="lbl">Patrimonio total</div><div class="val num" style="color:var(--bal)">${fmt(totCuentas+totVal)}</div></div>`;
   document.getElementById('tablaCartera').innerHTML =
     `<tr><th>Activo</th><th>Tipo</th><th>Broker</th><th class="r">Posición</th><th class="r">Invertido</th><th class="r">Últ. precio</th><th class="r">Valor</th><th class="r">P/L no realizado</th></tr>`
     + rows + vacioAbiertas + (abiertas.length ? `<tr><td style="font-weight:700">TOTAL</td><td colspan="3"></td><td class="r num" style="font-weight:700">${fmt(totInv)}</td><td></td>
